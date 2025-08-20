@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,15 +35,46 @@ const OpenChannelsManager = () => {
   const [newLineName, setNewLineName] = useState("");
   const [isConnected, setIsConnected] = useState(false);
 
+  // Ícone enviado pelo usuário (convertido p/ base64 em tempo de execução)
+  const ICON_PATH = "/lovable-uploads/55b0f757-ec04-4033-9e21-1e94200cf698.png";
+  const [connectorIconBase64, setConnectorIconBase64] = useState<string>("");
+
   const CONNECTOR_ID = "evolution_whatsapp";
   const CONNECTOR_NAME = "EvoWhats";
-  const CONNECTOR_ICON = "data:image/png;base64,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";
+  // Mantido como fallback, mas vamos priorizar o carregado dinamicamente
+  const CONNECTOR_ICON = ""; 
   const PLACEMENT = "CONTACT_CENTER";
   const HANDLER_URL = "https://evowhats-61.lovable.app";
 
   useEffect(() => {
     checkConnection();
+    // Carregar ícone como base64
+    loadIconBase64(ICON_PATH)
+      .then((dataUrl) => {
+        console.log("[OpenChannelsManager] Icon base64 loaded (length):", dataUrl?.length);
+        setConnectorIconBase64(dataUrl);
+      })
+      .catch((e) => {
+        console.error("[OpenChannelsManager] Failed to load base64 icon:", e);
+        toast({
+          title: "Falha ao carregar ícone",
+          description: "Não foi possível converter o ícone para base64.",
+          variant: "destructive",
+        });
+      });
   }, []);
+
+  async function loadIconBase64(path: string): Promise<string> {
+    const resp = await fetch(path);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
 
   const checkConnection = async () => {
     try {
@@ -78,13 +110,24 @@ const OpenChannelsManager = () => {
     }
   };
 
+  const iconToUse = connectorIconBase64 || CONNECTOR_ICON;
+
   const handleRegisterConnector = async () => {
+    if (!iconToUse) {
+      toast({
+        title: "Aguardando ícone",
+        description: "Estamos carregando o ícone do conector. Tente novamente em alguns segundos.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setLoading(true);
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: CONNECTOR_ICON,
+        icon: iconToUse, // Enviamos data URL; a função edge remove o prefixo automaticamente
         chatGroup: "N",
       });
       
@@ -96,9 +139,13 @@ const OpenChannelsManager = () => {
       await loadStatus();
     } catch (error: any) {
       console.error('Register connector error:', error);
+      // Dica de escopos se vier 404 ou método não encontrado
+      const hint = /404|not found|não encontrado/i.test(error?.message || "")
+        ? " Verifique se os escopos imopenlines, imconnector e im estão habilitados no OAuth do app."
+        : "";
       toast({
         title: "Erro ao registrar",
-        description: error.message || "Falha ao registrar conector",
+        description: (error.message || "Falha ao registrar conector") + hint,
         variant: "destructive",
       });
     } finally {
@@ -107,13 +154,22 @@ const OpenChannelsManager = () => {
   };
 
   const handlePublishData = async () => {
+    if (!iconToUse) {
+      toast({
+        title: "Aguardando ícone",
+        description: "Estamos carregando o ícone do conector. Tente novamente em alguns segundos.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setLoading(true);
       await publishConnectorData({
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
-          icon: CONNECTOR_ICON,
+          icon: iconToUse,
           description: "Integração WhatsApp via Evolution API",
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
         },
@@ -313,16 +369,16 @@ const OpenChannelsManager = () => {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleRegisterConnector}
-              disabled={loading || status?.registered}
+              disabled={loading || status?.registered || !iconToUse}
               variant={status?.registered ? "secondary" : "default"}
             >
               <Zap className="h-4 w-4 mr-2" />
-              {status?.registered ? "Conector Registrado" : "1. Registrar Conector"}
+              {status?.registered ? "Conector Registrado" : "1. Registrar Conector (EvoWhats)"}
             </Button>
 
             <Button
               onClick={handlePublishData}
-              disabled={loading || !status?.registered || status?.published}
+              disabled={loading || !status?.registered || status?.published || !iconToUse}
               variant={status?.published ? "secondary" : "default"}
             >
               <Settings className="h-4 w-4 mr-2" />
@@ -419,14 +475,14 @@ const OpenChannelsManager = () => {
         <div className="bg-muted p-4 rounded-lg">
           <h4 className="font-medium mb-2">Ordem de Configuração:</h4>
           <ol className="text-sm space-y-1">
-            <li>1. Registrar o conector REST no Bitrix24</li>
+            <li>1. Registrar o conector REST "EvoWhats"</li>
             <li>2. Publicar os dados do conector</li>
             <li>3. Adicionar tile ao Contact Center</li>
             <li>4. Criar linhas Open Channels conforme necessário</li>
             <li>5. Ativar o conector nas linhas desejadas</li>
           </ol>
           <p className="text-xs text-muted-foreground mt-2">
-            ⚠️ Conector "EvoWhats" com ícone personalizado configurado
+            ⚠️ O ícone do conector é carregado automaticamente a partir da imagem enviada.
           </p>
         </div>
       </CardContent>

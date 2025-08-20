@@ -24,7 +24,7 @@ function cors(origin?: string) {
   const allowed = origin && ALLOW_ORIGINS.has(origin) ? origin : Array.from(ALLOW_ORIGINS)[0];
   return {
     "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey", // ADICIONADO
+    "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
     "Content-Type": "application/json",
@@ -82,13 +82,18 @@ async function callBitrixAPI(portalUrl: string, method: string, accessToken: str
   });
 
   if (!response.ok) {
-    throw new Error(`Bitrix API error: ${response.status} ${response.statusText}`);
+    const text = await response.text().catch(() => "");
+    // Ajuda de diagnóstico para 404 (método não disponível/escopo)
+    if (response.status === 404) {
+      throw new Error(`Bitrix API error: 404 Not Found - verifique se o app está instalado com os escopos imopenlines, imconnector e im. ${text ? "Detalhes: " + text : ""}`);
+    }
+    throw new Error(`Bitrix API error: ${response.status} ${response.statusText}${text ? " - " + text : ""}`);
   }
 
   const data = await response.json();
   
-  if (data.error) {
-    throw new Error(`Bitrix API error: ${data.error_description || data.error}`);
+  if ((data as any).error) {
+    throw new Error(`Bitrix API error: ${(data as any).error_description || (data as any).error}`);
   }
 
   return data;
@@ -158,11 +163,16 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
 async function handleRegisterConnector(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Registering connector:", params.connector);
   
-  // CORREÇÃO: imconnector.register espera o parâmetro ID (não CONNECTOR)
+  // Normaliza ícone: remove prefixo data:image/*;base64, caso presente
+  let icon: string = params.icon ?? "";
+  if (typeof icon === "string" && /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(icon)) {
+    icon = icon.split(",")[1] || "";
+  }
+
   const result = await callBitrixAPI(portalUrl, "imconnector.register", accessToken, {
     ID: params.connector,
     NAME: params.name,
-    ICON: params.icon,
+    ICON: icon,
     CHAT_GROUP: params.chatGroup || "N"
   });
 
