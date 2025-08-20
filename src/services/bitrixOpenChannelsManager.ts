@@ -31,7 +31,7 @@ export async function getOpenChannelsStatus(): Promise<ConnectorStatus> {
   }
 
   const data = await resp.json();
-  return data.status;
+  return data.result;
 }
 
 export async function registerConnector(params: {

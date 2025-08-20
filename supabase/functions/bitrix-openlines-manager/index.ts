@@ -1,3 +1,4 @@
+
 /* Supabase Edge Function: bitrix-openlines-manager
    - Gerencia o fluxo oficial de Open Channels do Bitrix24
    - Registra conectores REST, publica dados, adiciona tiles ao Contact Center
@@ -92,6 +93,141 @@ async function callBitrixAPI(portalUrl: string, method: string, accessToken: str
   return data;
 }
 
+async function handleGetStatus(portalUrl: string, accessToken: string) {
+  console.log("[bitrix-openlines-manager] Getting connector status");
+  
+  try {
+    // Check if connector is registered
+    const connectorData = await callBitrixAPI(portalUrl, "imconnector.connector.data.get", accessToken, {
+      CONNECTOR: "evolution_whatsapp"
+    });
+    
+    const registered = !connectorData.error && connectorData.result;
+    console.log("[bitrix-openlines-manager] Connector registered:", registered);
+
+    // Check published data
+    const publishedData = registered ? connectorData.result : null;
+    const published = !!(publishedData && publishedData.name);
+
+    // Get open lines list
+    const linesResult = await callBitrixAPI(portalUrl, "imopenlines.config.list.get", accessToken);
+    const lines = linesResult.result || [];
+
+    // Check active connections
+    const activeConnections: string[] = [];
+    for (const line of lines) {
+      try {
+        const connectorResult = await callBitrixAPI(portalUrl, "imconnector.connector.status", accessToken, {
+          CONNECTOR: "evolution_whatsapp",
+          LINE: line.ID
+        });
+        
+        if (connectorResult.result && connectorResult.result.ACTIVE === "Y") {
+          activeConnections.push(line.ID);
+        }
+      } catch (e) {
+        console.warn("[bitrix-openlines-manager] Error checking connector status for line", line.ID, e);
+      }
+    }
+
+    // Check if tile is placed (simplified check)
+    let tilePlaced = false;
+    try {
+      const placementResult = await callBitrixAPI(portalUrl, "placement.list", accessToken);
+      tilePlaced = placementResult.result && placementResult.result.some((p: any) => 
+        p.placement === "CONTACT_CENTER" && p.handler.includes("evolution")
+      );
+    } catch (e) {
+      console.warn("[bitrix-openlines-manager] Error checking placement:", e);
+    }
+
+    return {
+      registered,
+      published,
+      tilePlaced,
+      lines,
+      activeConnections
+    };
+  } catch (error) {
+    console.error("[bitrix-openlines-manager] Error getting status:", error);
+    throw error;
+  }
+}
+
+async function handleRegisterConnector(portalUrl: string, accessToken: string, params: any) {
+  console.log("[bitrix-openlines-manager] Registering connector:", params.connector);
+  
+  const result = await callBitrixAPI(portalUrl, "imconnector.register", accessToken, {
+    CONNECTOR: params.connector,
+    NAME: params.name,
+    ICON: params.icon,
+    CHAT_GROUP: params.chatGroup || "N"
+  });
+
+  return result;
+}
+
+async function handlePublishConnectorData(portalUrl: string, accessToken: string, params: any) {
+  console.log("[bitrix-openlines-manager] Publishing connector data:", params.connector);
+  
+  const result = await callBitrixAPI(portalUrl, "imconnector.connector.data.set", accessToken, {
+    CONNECTOR: params.connector,
+    DATA: params.data
+  });
+
+  return result;
+}
+
+async function handleAddToContactCenter(portalUrl: string, accessToken: string, params: any) {
+  console.log("[bitrix-openlines-manager] Adding to contact center:", params.placement);
+  
+  const result = await callBitrixAPI(portalUrl, "placement.bind", accessToken, {
+    PLACEMENT: params.placement,
+    HANDLER: params.handlerUrl,
+    TITLE: "EvoWhats",
+    DESCRIPTION: "Integração WhatsApp via Evolution API"
+  });
+
+  return result;
+}
+
+async function handleCreateLine(portalUrl: string, accessToken: string, name: string) {
+  console.log("[bitrix-openlines-manager] Creating line:", name);
+  
+  const result = await callBitrixAPI(portalUrl, "imopenlines.config.add", accessToken, {
+    PARAMS: {
+      LINE_NAME: name,
+      CRM: "Y",
+      CRM_CREATE: "lead",
+      QUEUE_TIME: 60,
+      MAX_QUEUE_LENGTH: 5,
+      WAIT_ANSWER: 300
+    }
+  });
+
+  return result;
+}
+
+async function handleActivateConnector(portalUrl: string, accessToken: string, params: any) {
+  console.log("[bitrix-openlines-manager] Activating connector:", params.connector, "on line:", params.line);
+  
+  if (params.active) {
+    // Activate connector
+    const result = await callBitrixAPI(portalUrl, "imconnector.activate", accessToken, {
+      CONNECTOR: params.connector,
+      LINE: params.line
+    });
+    return result;
+  } else {
+    // Deactivate connector
+    const result = await callBitrixAPI(portalUrl, "imconnector.deactivate", accessToken, {
+      CONNECTOR: params.connector,
+      LINE: params.line
+    });
+    return result;
+  }
+}
+
 serve(async (req: Request) => {
   const origin = req.headers.get("origin");
   
@@ -121,19 +257,58 @@ serve(async (req: Request) => {
     }
 
     // Parse request body
-    const { method, params = {} } = await req.json() as { method: string; params?: Record<string, any> };
+    const body = await req.json() as { 
+      action?: string; 
+      method?: string; 
+      params?: Record<string, any>;
+      [key: string]: any;
+    };
     
-    if (!method) {
-      return jsonResponse({ error: "Method is required" }, 400, origin);
+    const action = body.action || body.method;
+    if (!action) {
+      return jsonResponse({ error: "Action or method is required" }, 400, origin);
     }
 
-    console.log("[bitrix-openlines-manager] Processing method:", method, "for user:", user.id);
+    console.log("[bitrix-openlines-manager] Processing action:", action, "for user:", user.id);
 
     // Get Bitrix credentials
     const creds = await getBitrixCredentials(supabase, user.id);
     
-    // Call Bitrix API
-    const result = await callBitrixAPI(creds.portal_url, method, creds.access_token, params);
+    let result;
+    
+    switch (action) {
+      case "get_status":
+        result = await handleGetStatus(creds.portal_url, creds.access_token);
+        break;
+        
+      case "register_connector":
+        result = await handleRegisterConnector(creds.portal_url, creds.access_token, body);
+        break;
+        
+      case "publish_connector_data":
+        result = await handlePublishConnectorData(creds.portal_url, creds.access_token, body);
+        break;
+        
+      case "add_to_contact_center":
+        result = await handleAddToContactCenter(creds.portal_url, creds.access_token, body);
+        break;
+        
+      case "create_line":
+        result = await handleCreateLine(creds.portal_url, creds.access_token, body.name);
+        break;
+        
+      case "activate_connector":
+        result = await handleActivateConnector(creds.portal_url, creds.access_token, body);
+        break;
+        
+      default:
+        // Handle generic Bitrix API calls
+        if (body.params) {
+          result = await callBitrixAPI(creds.portal_url, action, creds.access_token, body.params);
+        } else {
+          result = await callBitrixAPI(creds.portal_url, action, creds.access_token);
+        }
+    }
     
     // Log successful operation
     await supabase
@@ -143,8 +318,8 @@ serve(async (req: Request) => {
         portal_url: creds.portal_url,
         event_type: "api_call",
         event_data: {
-          method,
-          params,
+          action,
+          params: body.params,
           result: result.result || result,
           success: true
         },
