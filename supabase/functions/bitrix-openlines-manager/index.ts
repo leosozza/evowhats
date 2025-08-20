@@ -72,28 +72,40 @@ async function getBitrixCredentials(supabase: any, userId: string) {
 }
 
 async function callBitrixAPI(portalUrl: string, method: string, accessToken: string, params: Record<string, any> = {}) {
-  const url = `${portalUrl}/rest/${method}?auth=${accessToken}`;
-  console.log("[bitrix-openlines-manager] Calling:", method, "params:", Object.keys(params));
+  const url = `${portalUrl}/rest/${method}.json`;
+  console.log("[bitrix-openlines-manager] Calling:", method, "with params:", Object.keys(params));
   
+  const formData = new FormData();
+  formData.append('auth', accessToken);
+  
+  // Add all parameters to form data
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== null && value !== undefined) {
+      if (typeof value === 'object') {
+        formData.append(key, JSON.stringify(value));
+      } else {
+        formData.append(key, String(value));
+      }
+    }
+  }
+
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: formData,
   });
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    // Ajuda de diagnóstico para 404 (método não disponível/escopo)
     if (response.status === 404) {
-      throw new Error(`Bitrix API error: 404 Not Found - verifique se o app está instalado com os escopos imopenlines, imconnector e im. ${text ? "Detalhes: " + text : ""}`);
+      throw new Error(`Método Bitrix24 não encontrado: ${method}. Verifique se o app possui os escopos necessários: imopenlines, imconnector, im`);
     }
-    throw new Error(`Bitrix API error: ${response.status} ${response.statusText}${text ? " - " + text : ""}`);
+    throw new Error(`Erro na API Bitrix24: ${response.status} ${response.statusText}${text ? " - " + text : ""}`);
   }
 
   const data = await response.json();
   
-  if ((data as any).error) {
-    throw new Error(`Bitrix API error: ${(data as any).error_description || (data as any).error}`);
+  if (data.error) {
+    throw new Error(`Erro Bitrix24: ${data.error_description || data.error}`);
   }
 
   return data;
@@ -103,21 +115,33 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
   console.log("[bitrix-openlines-manager] Getting connector status");
   
   try {
-    // Check if connector is registered
-    const connectorData = await callBitrixAPI(portalUrl, "imconnector.connector.data.get", accessToken, {
-      CONNECTOR: "evolution_whatsapp"
-    });
-    
-    const registered = !connectorData.error && connectorData.result;
-    console.log("[bitrix-openlines-manager] Connector registered:", registered);
+    // Check if connector is registered using a safer method
+    let registered = false;
+    let published = false;
+    let connectorData = null;
 
-    // Check published data
-    const publishedData = registered ? connectorData.result : null;
-    const published = !!(publishedData && publishedData.name);
+    try {
+      const connectorResult = await callBitrixAPI(portalUrl, "imconnector.connector.data.get", accessToken, {
+        CONNECTOR: "evolution_whatsapp"
+      });
+      
+      if (connectorResult.result && !connectorResult.error) {
+        registered = true;
+        connectorData = connectorResult.result;
+        published = !!(connectorData && connectorData.name);
+      }
+    } catch (e) {
+      console.log("[bitrix-openlines-manager] Connector not registered yet:", e);
+    }
 
     // Get open lines list
-    const linesResult = await callBitrixAPI(portalUrl, "imopenlines.config.list.get", accessToken);
-    const lines = linesResult.result || [];
+    let lines = [];
+    try {
+      const linesResult = await callBitrixAPI(portalUrl, "imopenlines.config.list.get", accessToken);
+      lines = linesResult.result || [];
+    } catch (e) {
+      console.warn("[bitrix-openlines-manager] Could not get lines:", e);
+    }
 
     // Check active connections
     const activeConnections: string[] = [];
@@ -132,17 +156,19 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
           activeConnections.push(line.ID);
         }
       } catch (e) {
-        console.warn("[bitrix-openlines-manager] Error checking connector status for line", line.ID, e);
+        console.warn("[bitrix-openlines-manager] Error checking connector status for line", line.ID);
       }
     }
 
-    // Check if tile is placed (simplified check)
+    // Check if tile is placed
     let tilePlaced = false;
     try {
       const placementResult = await callBitrixAPI(portalUrl, "placement.list", accessToken);
-      tilePlaced = placementResult.result && placementResult.result.some((p: any) => 
-        p.placement === "CONTACT_CENTER" && p.handler.includes("evolution")
-      );
+      if (placementResult.result) {
+        tilePlaced = placementResult.result.some((p: any) => 
+          p.placement === "CONTACT_CENTER" && p.handler && p.handler.includes("evolution")
+        );
+      }
     } catch (e) {
       console.warn("[bitrix-openlines-manager] Error checking placement:", e);
     }
@@ -163,16 +189,31 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
 async function handleRegisterConnector(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Registering connector:", params.connector);
   
-  // Normaliza ícone: remove prefixo data:image/*;base64, caso presente
-  let icon: string = params.icon ?? "";
-  if (typeof icon === "string" && /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(icon)) {
-    icon = icon.split(",")[1] || "";
+  // Process icon: extract base64 data if it's a data URL
+  let iconBase64 = "";
+  if (params.icon) {
+    if (typeof params.icon === "string") {
+      if (params.icon.startsWith("data:image/")) {
+        // Extract base64 part after comma
+        const base64Match = params.icon.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (base64Match) {
+          iconBase64 = base64Match[1];
+        }
+      } else {
+        // Assume it's already base64
+        iconBase64 = params.icon;
+      }
+    }
+  }
+
+  if (!iconBase64) {
+    throw new Error("Ícone é obrigatório para registrar o conector");
   }
 
   const result = await callBitrixAPI(portalUrl, "imconnector.register", accessToken, {
     ID: params.connector,
     NAME: params.name,
-    ICON: icon,
+    ICON: iconBase64,
     CHAT_GROUP: params.chatGroup || "N"
   });
 
@@ -182,9 +223,29 @@ async function handleRegisterConnector(portalUrl: string, accessToken: string, p
 async function handlePublishConnectorData(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Publishing connector data:", params.connector);
   
+  // Process icon for publishing
+  let iconBase64 = "";
+  if (params.data && params.data.icon) {
+    if (typeof params.data.icon === "string") {
+      if (params.data.icon.startsWith("data:image/")) {
+        const base64Match = params.data.icon.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (base64Match) {
+          iconBase64 = base64Match[1];
+        }
+      } else {
+        iconBase64 = params.data.icon;
+      }
+    }
+  }
+
+  const publishData = {
+    ...params.data,
+    icon: iconBase64
+  };
+  
   const result = await callBitrixAPI(portalUrl, "imconnector.connector.data.set", accessToken, {
     CONNECTOR: params.connector,
-    DATA: params.data
+    DATA: publishData
   });
 
   return result;

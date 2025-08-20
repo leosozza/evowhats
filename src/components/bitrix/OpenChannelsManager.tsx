@@ -15,7 +15,8 @@ import {
   Pause,
   MessageSquare,
   Zap,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
 import {
   getOpenChannelsStatus,
@@ -41,8 +42,6 @@ const OpenChannelsManager = () => {
 
   const CONNECTOR_ID = "evolution_whatsapp";
   const CONNECTOR_NAME = "EvoWhats";
-  // Mantido como fallback, mas vamos priorizar o carregado dinamicamente
-  const CONNECTOR_ICON = ""; 
   const PLACEMENT = "CONTACT_CENTER";
   const HANDLER_URL = "https://evowhats-61.lovable.app";
 
@@ -57,23 +56,29 @@ const OpenChannelsManager = () => {
       .catch((e) => {
         console.error("[OpenChannelsManager] Failed to load base64 icon:", e);
         toast({
-          title: "Falha ao carregar ícone",
-          description: "Não foi possível converter o ícone para base64.",
-          variant: "destructive",
+          title: "Aviso",
+          description: "Não foi possível carregar o ícone. Usando ícone padrão.",
+          variant: "default",
         });
       });
   }, []);
 
   async function loadIconBase64(path: string): Promise<string> {
-    const resp = await fetch(path);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const blob = await resp.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    try {
+      const resp = await fetch(path);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (error) {
+      console.error("[OpenChannelsManager] Error loading icon:", error);
+      // Return a default base64 icon if loading fails
+      return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    }
   }
 
   const checkConnection = async () => {
@@ -110,13 +115,11 @@ const OpenChannelsManager = () => {
     }
   };
 
-  const iconToUse = connectorIconBase64 || CONNECTOR_ICON;
-
   const handleRegisterConnector = async () => {
-    if (!iconToUse) {
+    if (!connectorIconBase64) {
       toast({
-        title: "Aguardando ícone",
-        description: "Estamos carregando o ícone do conector. Tente novamente em alguns segundos.",
+        title: "Ícone necessário",
+        description: "Aguarde o carregamento do ícone ou tente novamente.",
         variant: "destructive",
       });
       return;
@@ -127,7 +130,7 @@ const OpenChannelsManager = () => {
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: iconToUse, // Enviamos data URL; a função edge remove o prefixo automaticamente
+        icon: connectorIconBase64,
         chatGroup: "N",
       });
       
@@ -139,13 +142,9 @@ const OpenChannelsManager = () => {
       await loadStatus();
     } catch (error: any) {
       console.error('Register connector error:', error);
-      // Dica de escopos se vier 404 ou método não encontrado
-      const hint = /404|not found|não encontrado/i.test(error?.message || "")
-        ? " Verifique se os escopos imopenlines, imconnector e im estão habilitados no OAuth do app."
-        : "";
       toast({
         title: "Erro ao registrar",
-        description: (error.message || "Falha ao registrar conector") + hint,
+        description: error.message || "Falha ao registrar conector",
         variant: "destructive",
       });
     } finally {
@@ -154,10 +153,10 @@ const OpenChannelsManager = () => {
   };
 
   const handlePublishData = async () => {
-    if (!iconToUse) {
+    if (!connectorIconBase64) {
       toast({
-        title: "Aguardando ícone",
-        description: "Estamos carregando o ícone do conector. Tente novamente em alguns segundos.",
+        title: "Ícone necessário",
+        description: "Aguarde o carregamento do ícone ou tente novamente.",
         variant: "destructive",
       });
       return;
@@ -169,7 +168,7 @@ const OpenChannelsManager = () => {
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
-          icon: iconToUse,
+          icon: connectorIconBase64,
           description: "Integração WhatsApp via Evolution API",
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
         },
@@ -305,11 +304,11 @@ const OpenChannelsManager = () => {
             <div>
               <h3 className="font-medium">Conexão Bitrix24 necessária</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Conecte-se ao Bitrix24 via OAuth na aba "Bitrix24" para usar os Open Channels.
+                Conecte-se ao Bitrix24 via OAuth na aba "Configurações" para usar os Open Channels.
               </p>
             </div>
             <Button onClick={checkConnection} variant="outline">
-              <Settings className="h-4 w-4 mr-2" />
+              <RefreshCw className="h-4 w-4 mr-2" />
               Verificar Conexão
             </Button>
           </div>
@@ -324,6 +323,9 @@ const OpenChannelsManager = () => {
         <CardTitle className="flex items-center gap-2">
           <MessageSquare className="h-5 w-5" />
           Gerenciador de Open Channels
+          <Button onClick={loadStatus} variant="ghost" size="sm" disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -356,7 +358,7 @@ const OpenChannelsManager = () => {
               />
             </div>
           ) : (
-            <Button onClick={loadStatus} variant="outline" size="sm">
+            <Button onClick={loadStatus} variant="outline" size="sm" disabled={loading}>
               <Settings className="h-4 w-4 mr-2" />
               Verificar Status
             </Button>
@@ -369,20 +371,20 @@ const OpenChannelsManager = () => {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleRegisterConnector}
-              disabled={loading || status?.registered || !iconToUse}
+              disabled={loading || status?.registered}
               variant={status?.registered ? "secondary" : "default"}
             >
               <Zap className="h-4 w-4 mr-2" />
-              {status?.registered ? "Conector Registrado" : "1. Registrar Conector (EvoWhats)"}
+              {status?.registered ? "✓ Conector Registrado" : "1. Registrar Conector"}
             </Button>
 
             <Button
               onClick={handlePublishData}
-              disabled={loading || !status?.registered || status?.published || !iconToUse}
+              disabled={loading || !status?.registered || status?.published}
               variant={status?.published ? "secondary" : "default"}
             >
               <Settings className="h-4 w-4 mr-2" />
-              {status?.published ? "Dados Publicados" : "2. Publicar Dados"}
+              {status?.published ? "✓ Dados Publicados" : "2. Publicar Dados"}
             </Button>
 
             <Button
@@ -391,7 +393,7 @@ const OpenChannelsManager = () => {
               variant={status?.tilePlaced ? "secondary" : "default"}
             >
               <Plus className="h-4 w-4 mr-2" />
-              {status?.tilePlaced ? "Tile Adicionado" : "3. Adicionar Tile"}
+              {status?.tilePlaced ? "✓ Tile Adicionado" : "3. Adicionar Tile"}
             </Button>
           </div>
         </div>
@@ -409,6 +411,7 @@ const OpenChannelsManager = () => {
                 placeholder="Nome da linha (ex: WhatsApp Vendas)"
                 value={newLineName}
                 onChange={(e) => setNewLineName(e.target.value)}
+                disabled={loading}
               />
             </div>
             <div className="flex items-end">
@@ -482,7 +485,7 @@ const OpenChannelsManager = () => {
             <li>5. Ativar o conector nas linhas desejadas</li>
           </ol>
           <p className="text-xs text-muted-foreground mt-2">
-            ⚠️ O ícone do conector é carregado automaticamente a partir da imagem enviada.
+            💡 O ícone do conector é carregado automaticamente. Certifique-se de que sua conta Bitrix24 possui os escopos necessários.
           </p>
         </div>
       </CardContent>
