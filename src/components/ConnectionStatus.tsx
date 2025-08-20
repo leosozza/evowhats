@@ -1,85 +1,191 @@
 
-import { useEffect, useState } from "react";
-import { Card } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { 
+  CheckCircle, 
+  XCircle, 
+  AlertTriangle, 
+  RefreshCw,
+  MessageSquare,
+  Zap
+} from "lucide-react";
+import { testEvolutionConnection, type ConnectionTest } from "@/services/evolutionApi";
 import { getBitrixAuthStatus, type BitrixAuthStatus } from "@/services/bitrixAuthStatus";
+import { useToast } from "@/hooks/use-toast";
+import OpenChannelsManager from "./bitrix/OpenChannelsManager";
 
-interface ConnectionStatusProps {
-  title: string;
-  status: "connected" | "disconnected" | "connecting";
-  description: string;
-  icon: React.ReactNode;
-}
-
-const ConnectionStatus = ({ title, status, description, icon }: ConnectionStatusProps) => {
+const ConnectionStatus = () => {
+  const [evolutionStatus, setEvolutionStatus] = useState<ConnectionTest | null>(null);
   const [bitrixStatus, setBitrixStatus] = useState<BitrixAuthStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [showOpenChannels, setShowOpenChannels] = useState(false);
+  const { toast } = useToast();
 
-  useEffect(() => {
-    const checkBitrixStatus = async () => {
-      if (title === "Bitrix24") {
-        try {
-          const status = await getBitrixAuthStatus();
-          setBitrixStatus(status);
-        } catch (error) {
-          console.error("Error checking Bitrix status:", error);
-        }
+  const checkConnections = async () => {
+    setLoading(true);
+    try {
+      // Check Bitrix status
+      const bitrixAuth = await getBitrixAuthStatus();
+      setBitrixStatus(bitrixAuth);
+
+      // Check Evolution API status if configured
+      try {
+        const evolutionTest = await testEvolutionConnection("", "", "");
+        setEvolutionStatus(evolutionTest);
+      } catch (error) {
+        setEvolutionStatus({
+          success: false,
+          message: "Evolution API não configurada"
+        });
       }
+    } catch (error: any) {
+      console.error('Error checking connections:', error);
+      toast({
+        title: "Erro ao verificar conexões",
+        description: error.message || "Falha ao verificar status das conexões",
+        variant: "destructive",
+      });
+    } finally {
       setLoading(false);
-    };
-
-    checkBitrixStatus();
-    
-    // Refresh status every 30 seconds for Bitrix24
-    const interval = title === "Bitrix24" ? setInterval(checkBitrixStatus, 30000) : null;
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [title]);
-
-  // Override status and description for Bitrix24 based on OAuth status
-  let finalStatus = status;
-  let finalDescription = description;
-
-  if (title === "Bitrix24" && !loading && bitrixStatus) {
-    if (bitrixStatus.isConnected && bitrixStatus.hasValidTokens) {
-      finalStatus = "connected";
-      finalDescription = `✅ Conectado via OAuth - ${bitrixStatus.portalUrl}`;
-    } else if (bitrixStatus.isConnected && !bitrixStatus.hasValidTokens) {
-      finalStatus = "connecting";
-      finalDescription = "⚠️ Token expirado - Reconnecte via OAuth";
-    } else {
-      finalStatus = "disconnected";
-      finalDescription = bitrixStatus.error || "Configure suas credenciais OAuth";
-    }
-  }
-
-  const getStatusColor = () => {
-    switch (finalStatus) {
-      case "connected":
-        return "text-green-600 bg-green-50 border-green-200";
-      case "connecting":
-        return "text-orange-600 bg-orange-50 border-orange-200";
-      case "disconnected":
-        return "text-red-600 bg-red-50 border-red-200";
-      default:
-        return "text-gray-600 bg-gray-50 border-gray-200";
     }
   };
 
+  useEffect(() => {
+    checkConnections();
+  }, []);
+
+  const handleEvolutionBitrixClick = () => {
+    if (bitrixStatus?.isConnected && bitrixStatus?.hasValidTokens) {
+      setShowOpenChannels(true);
+    } else {
+      // Try to connect automatically or show connection panel
+      checkConnections();
+      toast({
+        title: "Conexão necessária",
+        description: "Configure a conexão Bitrix24 na aba Configurações primeiro.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (showOpenChannels) {
+    return <OpenChannelsManager />;
+  }
+
+  const getStatusColor = (isConnected: boolean) => isConnected ? "text-green-600" : "text-red-600";
+  const getStatusIcon = (isConnected: boolean) => isConnected ? CheckCircle : XCircle;
+
+  const evolutionConnected = evolutionStatus?.success || false;
+  const bitrixConnected = bitrixStatus?.isConnected && bitrixStatus?.hasValidTokens || false;
+
   return (
-    <Card className={`p-4 border-2 card-hover ${getStatusColor()}`}>
-      <div className="flex items-start space-x-3">
-        <div className="mt-1">{icon}</div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-sm">{title}</h3>
-          <p className="text-xs mt-1 break-words">{finalDescription}</p>
-          {loading && title === "Bitrix24" && (
-            <p className="text-xs mt-1 opacity-60">Verificando status...</p>
-          )}
-        </div>
-      </div>
-    </Card>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            Status das Conexões
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Evolution API Status */}
+            <div className="p-4 border rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-medium">Evolution API</h3>
+                <div className="flex items-center gap-1">
+                  {React.createElement(getStatusIcon(evolutionConnected), {
+                    className: `h-4 w-4 ${getStatusColor(evolutionConnected)}`
+                  })}
+                </div>
+              </div>
+              <Badge variant={evolutionConnected ? "default" : "secondary"}>
+                {evolutionConnected ? "Conectado" : "Desconectado"}
+              </Badge>
+              {evolutionStatus?.message && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {evolutionStatus.message}
+                </p>
+              )}
+            </div>
+
+            {/* Bitrix24 Status */}
+            <div className="p-4 border rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-medium">Bitrix24</h3>
+                <div className="flex items-center gap-1">
+                  {React.createElement(getStatusIcon(bitrixConnected), {
+                    className: `h-4 w-4 ${getStatusColor(bitrixConnected)}`
+                  })}
+                </div>
+              </div>
+              <Badge variant={bitrixConnected ? "default" : "secondary"}>
+                {bitrixConnected ? "Conectado" : "Desconectado"}
+              </Badge>
+              {bitrixStatus?.portalUrl && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  {bitrixStatus.portalUrl}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Integration Panel */}
+          <div className="pt-4 border-t">
+            <h3 className="font-medium mb-3">Integrações Disponíveis</h3>
+            
+            <Card 
+              className="cursor-pointer hover:bg-muted/50 transition-colors" 
+              onClick={handleEvolutionBitrixClick}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      <MessageSquare className="h-5 w-5" />
+                      <Zap className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-medium">Evolution API + Bitrix24</h4>
+                      <p className="text-sm text-muted-foreground">
+                        WhatsApp via Evolution API integrado ao Bitrix24 Open Channels
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {evolutionConnected && bitrixConnected ? (
+                      <Badge className="bg-green-100 text-green-800">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Configurar
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Conectar
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex justify-center pt-4">
+            <Button 
+              onClick={checkConnections} 
+              disabled={loading}
+              variant="outline"
+              size="sm"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Verificando...' : 'Atualizar Status'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 };
 
