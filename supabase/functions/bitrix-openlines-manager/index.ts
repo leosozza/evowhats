@@ -14,6 +14,7 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const ALLOW_ORIGINS = new Set<string>([
   "https://ca2ff569-eda4-4a88-8252-9cf6f165b5f7.lovableproject.com",
   "https://ca2ff569-eda4-4a88-8252-9cf6f165b5f7.sandbox.lovable.dev",
+  "https://evowhats-61.lovable.app",
   "https://bitrix-evolution-chat.lovable.app",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.lovableproject.com",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.sandbox.lovable.dev",

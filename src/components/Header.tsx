@@ -39,7 +39,7 @@ const Header = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-foreground">
-                  WhatsApp Connector
+                  EvoWhats
                 </h1>
                 <p className="text-sm text-muted-foreground">
                   Bitrix24 + Evolution API
