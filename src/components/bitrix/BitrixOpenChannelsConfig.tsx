@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -47,7 +46,7 @@ export default function BitrixOpenChannelsConfig() {
   const [connectorConfig, setConnectorConfig] = useState({
     name: "WhatsApp (Evolution)",
     icon: "https://bitrix24public.com/maxsystem.bitrix24.com.br/docs/pub/6073291c3d77400547b99aeecc479ab3/showFile/?&token=e4lvaxqwjgz1",
-    connectorId: "evolution.whatsapp"
+    connectorId: "evolution_whatsapp"
   });
 
   const [newLineName, setNewLineName] = useState("WhatsApp - Evolution");
@@ -152,7 +151,7 @@ export default function BitrixOpenChannelsConfig() {
         body: {
           action: 'add_to_contact_center',
           placement: 'CONTACT_CENTER',
-          handlerUrl: `${window.location.origin}/settings`
+          handlerUrl: window.location.origin
         }
       });
 

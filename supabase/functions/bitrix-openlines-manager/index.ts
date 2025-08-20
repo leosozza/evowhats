@@ -10,7 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-// CORS restrito
+// CORS com domínios atualizados
 const ALLOW_ORIGINS = new Set<string>([
   "https://bitrix-evolution-chat.lovable.app",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.lovableproject.com",

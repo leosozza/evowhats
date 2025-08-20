@@ -52,8 +52,9 @@ serve(async (req) => {
     error 
   });
 
-  // Construir URL de redirecionamento para o frontend
-  const frontendUrl = "https://bitrix-evolution-chat.lovable.app/bitrix-callback";
+  // Use window.location.origin equivalent for the callback URL
+  const origin = u.origin;
+  const frontendUrl = `${origin}/bitrix-callback`;
   const redirectUrl = new URL(frontendUrl);
   
   if (error) {

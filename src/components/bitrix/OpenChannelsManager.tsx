@@ -36,9 +36,9 @@ const OpenChannelsManager = () => {
 
   const CONNECTOR_ID = "evolution_whatsapp"; // Removed dots as per Bitrix requirement
   const CONNECTOR_NAME = "EvoWhats";
-  const CONNECTOR_ICON = "https://bitrix-evolution-chat.lovable.app/lovable-uploads/a9249a3c-ae20-4970-8fc6-76901a188742.png";
+  const CONNECTOR_ICON = `${window.location.origin}/lovable-uploads/a9249a3c-ae20-4970-8fc6-76901a188742.png`;
   const PLACEMENT = "CONTACT_CENTER";
-  const HANDLER_URL = "https://bitrix-evolution-chat.lovable.app/";
+  const HANDLER_URL = window.location.origin;
 
   useEffect(() => {
     checkConnection();

@@ -14,10 +14,11 @@ const SCOPES = "imopenlines,imconnector,im,user,event,event_bind,placement,crm";
 const CLIENT_ID = Deno.env.get("BITRIX_CLIENT_ID") || "";
 const CLIENT_SECRET = Deno.env.get("BITRIX_CLIENT_SECRET") || "";
 
-// CORS restrito às origens autorizadas
+// CORS com domínios atualizados
 const ALLOW_ORIGINS = new Set<string>([
   "https://bitrix-evolution-chat.lovable.app",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.lovableproject.com",
+  "https://cc36407e-faf0-456e-8337-8cf59bc73db3.sandbox.lovable.dev",
 ]);
 
 function cors(origin?: string) {
