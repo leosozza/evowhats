@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -14,8 +13,10 @@ const SCOPES = "imopenlines,imconnector,im,user,event,event_bind,placement,crm";
 const CLIENT_ID = Deno.env.get("BITRIX_CLIENT_ID") || "";
 const CLIENT_SECRET = Deno.env.get("BITRIX_CLIENT_SECRET") || "";
 
-// CORS com domínios atualizados
+// CORS com domínios atualizados para o novo projeto
 const ALLOW_ORIGINS = new Set<string>([
+  "https://ca2ff569-eda4-4a88-8252-9cf6f165b5f7.lovableproject.com",
+  "https://ca2ff569-eda4-4a88-8252-9cf6f165b5f7.sandbox.lovable.dev",
   "https://bitrix-evolution-chat.lovable.app",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.lovableproject.com",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.sandbox.lovable.dev",

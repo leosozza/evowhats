@@ -1,4 +1,3 @@
-
 /* Supabase Edge Function: bitrix-openlines-manager
    - Gerencia o fluxo oficial de Open Channels do Bitrix24
    - Registra conectores REST, publica dados, adiciona tiles ao Contact Center
@@ -10,8 +9,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-// CORS com domínios atualizados
+// CORS com domínios atualizados para o novo projeto
 const ALLOW_ORIGINS = new Set<string>([
+  "https://ca2ff569-eda4-4a88-8252-9cf6f165b5f7.lovableproject.com",
+  "https://ca2ff569-eda4-4a88-8252-9cf6f165b5f7.sandbox.lovable.dev",
   "https://bitrix-evolution-chat.lovable.app",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.lovableproject.com",
   "https://cc36407e-faf0-456e-8337-8cf59bc73db3.sandbox.lovable.dev",
