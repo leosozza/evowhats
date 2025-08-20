@@ -29,7 +29,8 @@ function cors(origin?: string) {
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers": "content-type,authorization",
+    // ADICIONADO: x-client-info e apikey (requeridos pelo Supabase SDK no navegador)
+    "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey",
     "Vary": "Origin",
   };
 }

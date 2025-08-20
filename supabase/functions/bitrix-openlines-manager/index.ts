@@ -24,7 +24,7 @@ function cors(origin?: string) {
   const allowed = origin && ALLOW_ORIGINS.has(origin) ? origin : Array.from(ALLOW_ORIGINS)[0];
   return {
     "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Headers": "authorization,content-type",
+    "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey", // ADICIONADO
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
     "Content-Type": "application/json",
@@ -158,8 +158,9 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
 async function handleRegisterConnector(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Registering connector:", params.connector);
   
+  // CORREÇÃO: imconnector.register espera o parâmetro ID (não CONNECTOR)
   const result = await callBitrixAPI(portalUrl, "imconnector.register", accessToken, {
-    CONNECTOR: params.connector,
+    ID: params.connector,
     NAME: params.name,
     ICON: params.icon,
     CHAT_GROUP: params.chatGroup || "N"
