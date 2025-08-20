@@ -1,0 +1,90 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System para Conector Bitrix24 + Evolution API */
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 220 13% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 13% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 13% 13%;
+
+    /* Primary - Azul corporativo */
+    --primary: 214 84% 56%;
+    --primary-foreground: 0 0% 98%;
+
+    /* Secondary - Verde WhatsApp */
+    --secondary: 142 76% 36%;
+    --secondary-foreground: 0 0% 98%;
+
+    /* Accent - Laranja Bitrix24 */
+    --accent: 25 95% 53%;
+    --accent-foreground: 0 0% 98%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 214 84% 56%;
+
+    --radius: 0.75rem;
+
+    /* Gradientes personalizados */
+    --gradient-primary: linear-gradient(135deg, hsl(214 84% 56%) 0%, hsl(142 76% 36%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(25 95% 53%) 0%, hsl(214 84% 56%) 100%);
+    --gradient-success: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(142 76% 46%) 100%);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@layer components {
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+  
+  .gradient-accent {
+    background: var(--gradient-accent);
+  }
+  
+  .gradient-success {
+    background: var(--gradient-success);
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
+  }
+
+  .status-indicator {
+    @apply w-3 h-3 rounded-full animate-pulse;
+  }
+
+  .status-connected {
+    @apply bg-green-500;
+  }
+
+  .status-disconnected {
+    @apply bg-red-500;
+  }
+
+  .status-connecting {
+    @apply bg-yellow-500;
+  }
+}
