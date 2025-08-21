@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +18,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useBitrixTokenRefresh } from "@/hooks/useBitrixTokenRefresh";
 
 const ConfigurationPanel = () => {
   const [loading, setLoading] = useState(false);
@@ -29,6 +29,8 @@ const ConfigurationPanel = () => {
     instanceName: ""
   });
   const { toast } = useToast();
+
+  useBitrixTokenRefresh();
 
   const handleSaveEvolution = async () => {
     if (!evolutionConfig.baseUrl || !evolutionConfig.apiKey) {
@@ -79,6 +81,29 @@ const ConfigurationPanel = () => {
           <CardTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
             Evolution API
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                    <Info className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm">
+                  <div className="space-y-2 text-sm">
+                    <p><strong>🔧 Configuração por Canal:</strong></p>
+                    <p>Cada canal do Bitrix24 terá sua própria instância Evolution:</p>
+                    <ul className="list-disc pl-4">
+                      <li><strong>URL Base:</strong> Mesma para todos os canais</li>
+                      <li><strong>API Key:</strong> Mesma chave de acesso</li>
+                      <li><strong>Instâncias:</strong> Criadas automaticamente por canal</li>
+                    </ul>
+                    <p><strong>Exemplo de nomes de instância:</strong><br/>
+                    • Canal 1: bitrix_line_1_1692834567<br/>
+                    • Canal 2: bitrix_line_2_1692834568</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -93,6 +118,9 @@ const ConfigurationPanel = () => {
                 baseUrl: e.target.value
               }))}
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Esta URL será usada para todas as instâncias dos canais
+            </p>
           </div>
 
           <div>
@@ -109,17 +137,11 @@ const ConfigurationPanel = () => {
             />
           </div>
 
-          <div>
-            <Label htmlFor="instance-name">Nome da Instância</Label>
-            <Input
-              id="instance-name"
-              placeholder="default"
-              value={evolutionConfig.instanceName}
-              onChange={(e) => setEvolutionConfig(prev => ({
-                ...prev,
-                instanceName: e.target.value
-              }))}
-            />
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="text-sm text-blue-800">
+              <p className="font-medium">🔄 Instâncias Automáticas:</p>
+              <p>Não é necessário definir um nome de instância aqui. O sistema criará automaticamente uma instância única para cada canal do Bitrix24 que você ativar.</p>
+            </div>
           </div>
 
           <Button onClick={handleSaveEvolution} disabled={loading}>
@@ -148,14 +170,9 @@ const ConfigurationPanel = () => {
                     <p><strong>URL de Redirecionamento:</strong><br/>
                     https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-oauth-callback</p>
                     <p><strong>Escopos necessários:</strong><br/>
-                    imopenlines, imconnector, im, user, event, event_bind, placement, crm</p>
-                    <p><strong>⚠️</strong> Use apenas os escopos listados acima para evitar rejeições.</p>
-                    <p><strong>📋 Requisitos do Bitrix24:</strong></p>
-                    <ul className="list-disc pl-4">
-                      <li>Plano pago ou período de demonstração ativo</li>
-                      <li>Permissões de administrador para configurar apps</li>
-                      <li>App Local criado no painel de desenvolvedor</li>
-                    </ul>
+                    imopenlines, imconnector, im, placement, crm, user, event, event_bind</p>
+                    <p><strong>🔄 Renovação Automática:</strong></p>
+                    <p>O sistema renova automaticamente os tokens OAuth a cada 5 minutos, evitando desconexões.</p>
                   </div>
                 </TooltipContent>
               </Tooltip>
@@ -180,6 +197,8 @@ const ConfigurationPanel = () => {
               <ul className="space-y-1 text-muted-foreground">
                 <li>• Configure primeiro a Evolution API e teste a conexão</li>
                 <li>• Depois configure o OAuth do Bitrix24 com os escopos corretos</li>
+                <li>• Cada canal do Bitrix criará automaticamente sua instância Evolution</li>
+                <li>• Os tokens OAuth são renovados automaticamente a cada 5 minutos</li>
                 <li>• Use o Gerenciador de Open Channels para configurar a integração</li>
               </ul>
             </div>
