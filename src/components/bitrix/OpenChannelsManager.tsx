@@ -50,8 +50,10 @@ const OpenChannelsManager = () => {
   const CONNECTOR_NAME = `EvoWhats ${getCurrentVersion()}`;
   const PLACEMENT = "CONTACT_CENTER";
   
-  // URL corrigida para o handler do conector (não o app principal)
-  const HANDLER_URL = "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook";
+  // URLs corrigidas - separando tile do Contact Center e handler do conector
+  const TILE_HANDLER_URL = "https://evowhats-61.lovable.app/cc/landing";
+  const CONNECTOR_HANDLER_URL = "https://evowhats-61.lovable.app/connector/setup";
+  const WEBHOOK_URL = "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook";
 
   useEffect(() => {
     checkConnection();
@@ -92,7 +94,7 @@ const OpenChannelsManager = () => {
   const handleRegisterConnector = async () => {
     try {
       setLoading(true);
-      console.log("[OpenChannelsManager] Registering connector with SVG icon");
+      console.log("[OpenChannelsManager] Registering connector with separate URLs");
       
       await registerConnector({
         connector: CONNECTOR_ID,
@@ -128,9 +130,9 @@ const OpenChannelsManager = () => {
         data: {
           name: CONNECTOR_NAME,
           description: `Integração WhatsApp via Evolution API ${getCurrentVersion()}`,
-          url: "https://evowhats-61.lovable.app",
-          url_im: "https://evowhats-61.lovable.app",
-          webhook_url: HANDLER_URL,
+          url: TILE_HANDLER_URL, // URL do tile no Contact Center
+          url_im: CONNECTOR_HANDLER_URL, // URL do setup do conector
+          webhook_url: WEBHOOK_URL,
         },
       });
 
@@ -156,7 +158,7 @@ const OpenChannelsManager = () => {
       setLoading(true);
       await addToContactCenter({
         placement: PLACEMENT,
-        handlerUrl: HANDLER_URL,
+        handlerUrl: TILE_HANDLER_URL, // URL do tile (não do setup)
       });
       
       toast({
@@ -445,18 +447,19 @@ const OpenChannelsManager = () => {
 
         {/* Instructions */}
         <div className="bg-muted p-4 rounded-lg">
-          <h4 className="font-medium mb-2">Configurações Corrigidas:</h4>
+          <h4 className="font-medium mb-2">URLs Configuradas:</h4>
           <ol className="text-sm space-y-1">
-            <li>1. ✅ Ícone SVG conforme documentação Bitrix24</li>
-            <li>2. ✅ Handler URL corrigido para webhook específico</li>
-            <li>3. ✅ Suporte a múltiplas instâncias por linha</li>
-            <li>4. 🔄 Events binding para mensagens reais (próximo passo)</li>
-            <li>5. 🔄 Integração Evolution API multi-instância (próximo passo)</li>
+            <li>1. ✅ Tile Contact Center: /cc/landing</li>
+            <li>2. ✅ Setup Conector: /connector/setup</li>
+            <li>3. ✅ Webhook Bitrix: bitrix-openlines-webhook</li>
+            <li>4. ✅ Webhook Evolution: evolution-webhook</li>
+            <li>5. 🔄 Mensagens reais via webhook bidirecional</li>
           </ol>
           <div className="text-xs text-muted-foreground mt-2 space-y-1">
             <p>💡 Versão atual: {getCurrentVersion()}</p>
-            <p>🎯 Handler: {HANDLER_URL}</p>
-            <p>📱 Cada linha pode ter sua própria instância Evolution API</p>
+            <p>🎯 Tile: {TILE_HANDLER_URL}</p>
+            <p>⚙️ Setup: {CONNECTOR_HANDLER_URL}</p>
+            <p>📡 Webhook: {WEBHOOK_URL}</p>
           </div>
         </div>
       </CardContent>

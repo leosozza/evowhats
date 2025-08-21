@@ -1,159 +1,137 @@
 
-import { useState, useEffect } from "react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import React, { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useToast } from "@/hooks/use-toast";
-import { 
-  MessageSquare, 
-  RefreshCw, 
-  Clock, 
-  User, 
-  Phone,
-  CheckCircle,
-  AlertTriangle,
-  ExternalLink
-} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { MessageSquare, RefreshCw, Clock, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
-interface BitrixMessage {
+interface EventLog {
   id: string;
   event_type: string;
   event_data: any;
-  created_at: string;
   status: string;
-  user_id: string;
+  error_message?: string;
+  created_at: string;
+  processed_at?: string;
 }
 
 const RealMessageMonitor = () => {
-  const { toast } = useToast();
-  const [messages, setMessages] = useState<BitrixMessage[]>([]);
+  const [events, setEvents] = useState<EventLog[]>([]);
   const [loading, setLoading] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const { toast } = useToast();
 
-  useEffect(() => {
-    loadMessages();
-    
-    if (autoRefresh) {
-      const interval = setInterval(loadMessages, 5000); // Refresh every 5 seconds
-      return () => clearInterval(interval);
-    }
-  }, [autoRefresh]);
-
-  const loadMessages = async () => {
+  const loadEvents = async () => {
     try {
       setLoading(true);
       
-      const { data: user } = await supabase.auth.getUser();
-      if (!user.user) {
-        throw new Error('Usuário não autenticado');
-      }
-
       const { data, error } = await supabase
         .from('bitrix_event_logs')
         .select('*')
-        .eq('user_id', user.user.id)
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(20);
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
-      setMessages(data || []);
+      setEvents(data || []);
     } catch (error: any) {
-      console.error('Error loading messages:', error);
-      if (!loading) { // Only show error if it's not during auto-refresh
-        toast({
-          title: "Erro ao carregar mensagens",
-          description: error.message || "Falha ao carregar eventos do Bitrix24",
-          variant: "destructive",
-        });
-      }
+      console.error('Error loading events:', error);
+      toast({
+        title: "Erro ao carregar eventos",
+        description: error.message || "Falha ao buscar logs de eventos",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const getMessageTypeIcon = (eventType: string) => {
-    switch (eventType) {
-      case 'OnImConnectorMessageAdd':
-        return <MessageSquare className="h-4 w-4 text-blue-500" />;
-      case 'OnImConnectorMessageUpdate':
-        return <RefreshCw className="h-4 w-4 text-orange-500" />;
-      case 'OnImConnectorMessageDelete':
-        return <AlertTriangle className="h-4 w-4 text-red-500" />;
-      case 'openlines_event':
-        return <Phone className="h-4 w-4 text-green-500" />;
+  useEffect(() => {
+    loadEvents();
+    
+    // Auto-refresh every 10 seconds
+    const interval = setInterval(loadEvents, 10000);
+    
+    // Real-time subscription
+    const subscription = supabase
+      .channel('bitrix_events')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'bitrix_event_logs'
+      }, (payload) => {
+        console.log('New event received:', payload);
+        setEvents(prev => [payload.new as EventLog, ...prev.slice(0, 19)]);
+      })
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'processed':
+        return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case 'failed':
+        return <XCircle className="h-4 w-4 text-red-500" />;
+      case 'pending':
+        return <Clock className="h-4 w-4 text-yellow-500" />;
       default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
+        return <AlertTriangle className="h-4 w-4 text-gray-500" />;
     }
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'processed':
-        return <Badge className="bg-green-100 text-green-800">Processado</Badge>;
-      case 'pending':
-        return <Badge variant="secondary">Pendente</Badge>;
-      case 'error':
-        return <Badge variant="destructive">Erro</Badge>;
-      default:
-        return <Badge variant="outline">{status}</Badge>;
-    }
+    const variants: Record<string, any> = {
+      processed: "default",
+      failed: "destructive", 
+      pending: "secondary"
+    };
+    return variants[status] || "outline";
   };
 
-  const formatEventData = (eventData: any) => {
+  const formatEventData = (eventType: string, eventData: any) => {
     try {
-      if (!eventData) return 'Sem dados';
-      
-      // Extract relevant info from different event types
-      if (eventData.data) {
-        const { user, message, chat } = eventData.data;
-        if (message) {
-          return `${user?.name || 'Usuário'}: ${message.text || message.body || 'Mensagem'}`;
-        }
-        if (chat) {
-          return `Chat: ${chat.name || chat.id}`;
-        }
+      switch (eventType) {
+        case 'message_received':
+          const msgData = eventData?.message_data;
+          const contactNumber = msgData?.key?.remoteJid?.replace('@s.whatsapp.net', '') || 'Unknown';
+          const messageText = msgData?.message?.conversation || 
+                             msgData?.message?.extendedTextMessage?.text || 
+                             'Media message';
+          return {
+            contact: contactNumber,
+            message: messageText.substring(0, 100) + (messageText.length > 100 ? '...' : ''),
+            line: eventData?.line_id || 'N/A'
+          };
+        case 'connector_webhook':
+          return {
+            action: eventData?.action || 'Unknown',
+            result: eventData?.result ? 'Success' : 'Failed',
+            line: eventData?.line_id || 'N/A'
+          };
+        default:
+          return {
+            data: JSON.stringify(eventData).substring(0, 100) + '...'
+          };
       }
-      
-      // Fallback to raw data preview
-      const text = JSON.stringify(eventData);
-      return text.length > 100 ? text.substring(0, 100) + '...' : text;
-    } catch {
-      return 'Dados inválidos';
+    } catch (error) {
+      return { error: 'Failed to parse event data' };
     }
   };
 
-  const openEventDetails = (message: BitrixMessage) => {
-    // Open a modal or new window with full event details
-    const detailsWindow = window.open('', '_blank', 'width=800,height=600');
-    if (detailsWindow) {
-      detailsWindow.document.write(`
-        <html>
-          <head>
-            <title>Detalhes do Evento - ${message.event_type}</title>
-            <style>
-              body { font-family: monospace; padding: 20px; }
-              pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow: auto; }
-              .header { margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #ccc; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h2>${message.event_type}</h2>
-              <p><strong>Data:</strong> ${new Date(message.created_at).toLocaleString('pt-BR')}</p>
-              <p><strong>Status:</strong> ${message.status}</p>
-              <p><strong>ID:</strong> ${message.id}</p>
-            </div>
-            <h3>Dados do Evento:</h3>
-            <pre>${JSON.stringify(message.event_data, null, 2)}</pre>
-          </body>
-        </html>
-      `);
-    }
+  const formatTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit', 
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
   };
 
   return (
@@ -164,102 +142,85 @@ const RealMessageMonitor = () => {
             <MessageSquare className="h-5 w-5" />
             Monitor de Mensagens Reais
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              variant={autoRefresh ? "default" : "outline"}
-              size="sm"
-            >
-              {autoRefresh ? "Auto On" : "Auto Off"}
-            </Button>
-            <Button onClick={loadMessages} variant="outline" size="sm" disabled={loading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
+          <Button
+            onClick={loadEvents}
+            variant="outline"
+            size="sm"
+            disabled={loading}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </Button>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">{messages.length}</div>
-              <div className="text-sm text-muted-foreground">Total Eventos</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {messages.filter(m => m.status === 'processed').length}
-              </div>
-              <div className="text-sm text-muted-foreground">Processados</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">
-                {messages.filter(m => m.status === 'pending').length}
-              </div>
-              <div className="text-sm text-muted-foreground">Pendentes</div>
-            </div>
+        {loading && events.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+            <p className="text-sm text-muted-foreground mt-2">Carregando eventos...</p>
           </div>
-
-          {/* Messages List */}
-          <ScrollArea className="h-[400px] w-full border rounded-md p-4">
-            {messages.length === 0 ? (
-              <div className="text-center py-8">
-                <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                <p className="text-muted-foreground">
-                  {loading ? "Carregando eventos..." : "Nenhum evento encontrado"}
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Os eventos do Bitrix24 aparecerão aqui quando chegarem
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className="flex items-start gap-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
-                    onClick={() => openEventDetails(message)}
-                  >
-                    <div className="flex-shrink-0 mt-1">
-                      {getMessageTypeIcon(message.event_type)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="font-medium text-sm">
-                          {message.event_type}
-                        </p>
-                        <div className="flex items-center gap-2">
-                          {getStatusBadge(message.status)}
-                          <ExternalLink className="h-3 w-3 text-gray-400" />
-                        </div>
-                      </div>
-                      <p className="text-sm text-muted-foreground truncate">
-                        {formatEventData(message.event_data)}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        {new Date(message.created_at).toLocaleString('pt-BR')}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-
-          {/* Instructions */}
-          <div className="bg-muted p-4 rounded-lg">
-            <h4 className="font-medium mb-2">Sobre este Monitor:</h4>
-            <ul className="text-sm space-y-1">
-              <li>• ✅ Mostra eventos reais recebidos do Bitrix24</li>
-              <li>• 🔄 Atualização automática a cada 5 segundos</li>
-              <li>• 👁️ Clique em qualquer evento para ver detalhes completos</li>
-              <li>• 📊 Estatísticas de eventos processados e pendentes</li>
-            </ul>
-            <p className="text-xs text-muted-foreground mt-2">
-              Para começar a receber mensagens, ative o conector em uma linha no Open Channels.
+        ) : events.length === 0 ? (
+          <div className="text-center py-8">
+            <MessageSquare className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="font-medium">Nenhum evento registrado</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Os eventos de mensagens e webhook aparecerão aqui em tempo real.
             </p>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {events.map((event) => {
+              const formattedData = formatEventData(event.event_type, event.event_data);
+              
+              return (
+                <div key={event.id} className="border rounded-lg p-3 bg-card">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(event.status)}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">
+                            {event.event_type.replace('_', ' ').toUpperCase()}
+                          </span>
+                          <Badge variant={getStatusBadge(event.status)}>
+                            {event.status}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {formatTime(event.created_at)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-2 text-sm">
+                    {event.event_type === 'message_received' && (
+                      <div className="space-y-1">
+                        <p><strong>Contato:</strong> {formattedData.contact}</p>
+                        <p><strong>Linha:</strong> {formattedData.line}</p>
+                        <p><strong>Mensagem:</strong> "{formattedData.message}"</p>
+                      </div>
+                    )}
+                    
+                    {event.event_type === 'connector_webhook' && (
+                      <div className="space-y-1">
+                        <p><strong>Ação:</strong> {formattedData.action}</p>
+                        <p><strong>Resultado:</strong> {formattedData.result}</p>
+                        <p><strong>Linha:</strong> {formattedData.line}</p>
+                      </div>
+                    )}
+                    
+                    {event.error_message && (
+                      <p className="text-red-600 text-xs mt-1">
+                        <strong>Erro:</strong> {event.error_message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
