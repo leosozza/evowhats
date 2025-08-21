@@ -38,6 +38,16 @@ function optionsResponse(origin?: string) {
   return new Response(null, { status: 204, headers: cors(origin) });
 }
 
+function sanitizeBase64(input?: string): string {
+  if (!input || typeof input !== "string") return "";
+  // remove prefixo data:image/...;base64, se existir
+  const raw = input.startsWith("data:")
+    ? (input.split(",")[1] || "")
+    : input;
+  // remove qualquer whitespace e caracteres fora da base64
+  return raw.replace(/[^A-Za-z0-9+/=]/g, "");
+}
+
 async function getBitrixCredentials(supabase: any, userId: string) {
   const { data: creds, error } = await supabase
     .from("bitrix_credentials")
@@ -187,23 +197,13 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
 
 async function handleRegisterConnector(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Registering connector:", params.connector);
-  
-  let iconBase64 = "";
-  if (params.icon) {
-    if (typeof params.icon === "string") {
-      if (params.icon.startsWith("data:image/")) {
-        const base64Match = params.icon.match(/^data:image\/[^;]+;base64,(.+)$/);
-        if (base64Match) {
-          iconBase64 = base64Match[1];
-        }
-      } else {
-        iconBase64 = params.icon; // já é base64 cru
-      }
-    }
-  }
+
+  // Sanitiza e valida o ícone
+  const iconBase64 = sanitizeBase64(params.icon);
+  console.log("[bitrix-openlines-manager] Icon base64 length (register):", iconBase64.length);
 
   if (!iconBase64) {
-    throw new Error("Ícone é obrigatório para registrar o conector");
+    throw new Error("Ícone é obrigatório para registrar o conector (base64 cru)");
   }
 
   const result = await callBitrixAPI(portalUrl, "imconnector.register", accessToken, {
@@ -218,25 +218,11 @@ async function handleRegisterConnector(portalUrl: string, accessToken: string, p
 
 async function handlePublishConnectorData(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Publishing connector data:", params.connector);
-  
-  // Extrair base64 cru se vier como data URL
-  let iconBase64 = "";
-  if (params.data && params.data.icon) {
-    if (typeof params.data.icon === "string") {
-      if (params.data.icon.startsWith("data:image/")) {
-        const base64Match = params.data.icon.match(/^data:image\/[^;]+;base64,(.+)$/);
-        if (base64Match) {
-          iconBase64 = base64Match[1];
-        }
-      } else {
-        iconBase64 = params.data.icon;
-      }
-    }
-  }
 
-  const publishData: Record<string, any> = { ...params.data };
-  if (iconBase64) {
-    publishData.icon = iconBase64; // só sobrescreve se houver base64 cru válido
+  const publishData: Record<string, any> = { ...(params.data || {}) };
+  if (publishData.icon) {
+    publishData.icon = sanitizeBase64(String(publishData.icon));
+    console.log("[bitrix-openlines-manager] Icon base64 length (data.set):", publishData.icon.length);
   }
 
   const result = await callBitrixAPI(portalUrl, "imconnector.connector.data.set", accessToken, {

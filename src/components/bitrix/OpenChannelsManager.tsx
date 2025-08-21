@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,7 +37,7 @@ const OpenChannelsManager = () => {
 
   // Ícone enviado pelo usuário (convertido p/ base64 cru)
   const ICON_PATH = "/lovable-uploads/55b0f757-ec04-4033-9e21-1e94200cf698.png";
-  const [connectorIconBase64, setConnectorIconBase64] = useState<string>(""); // manteremos aqui o base64 cru (sem prefixo)
+  const [connectorIconBase64, setConnectorIconBase64] = useState<string>("");
 
   const CONNECTOR_ID = "evolution_whatsapp";
   const CONNECTOR_NAME = "EvoWhats";
@@ -47,14 +46,16 @@ const OpenChannelsManager = () => {
 
   useEffect(() => {
     checkConnection();
-    // Carregar ícone e armazenar como base64 cru
+    // Carregar ícone e armazenar como base64 cru, limpo
     loadIconBase64(ICON_PATH)
       .then((dataUrlOrRaw) => {
         const raw = dataUrlOrRaw.startsWith("data:")
           ? (dataUrlOrRaw.split(",")[1] || "")
           : dataUrlOrRaw;
-        console.log("[OpenChannelsManager] Icon base64 (raw) length:", raw.length);
-        setConnectorIconBase64(raw);
+        // Remove qualquer caractere fora do alfabeto base64 e whitespaces
+        const cleaned = raw.replace(/[^A-Za-z0-9+/=]/g, "");
+        console.log("[OpenChannelsManager] Icon base64 (raw) length:", cleaned.length);
+        setConnectorIconBase64(cleaned);
       })
       .catch((e) => {
         console.error("[OpenChannelsManager] Failed to load base64 icon:", e);
@@ -63,6 +64,8 @@ const OpenChannelsManager = () => {
           description: "Não foi possível carregar o ícone. Usando ícone padrão.",
           variant: "default",
         });
+        // fallback 1x1 px base64 cru
+        setConnectorIconBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==");
       });
   }, []);
 
@@ -117,11 +120,13 @@ const OpenChannelsManager = () => {
     }
   };
 
+  const iconIsReady = connectorIconBase64 && connectorIconBase64.length > 100;
+
   const handleRegisterConnector = async () => {
-    if (!connectorIconBase64) {
+    if (!iconIsReady) {
       toast({
         title: "Ícone necessário",
-        description: "Aguarde o carregamento do ícone ou tente novamente.",
+        description: "Aguarde o carregamento do ícone (base64) e tente novamente.",
         variant: "destructive",
       });
       return;
@@ -132,15 +137,13 @@ const OpenChannelsManager = () => {
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: connectorIconBase64, // base64 cru, sem prefixo
+        icon: connectorIconBase64, // base64 cru, sem prefixo e limpo
         chatGroup: "N",
       });
-      
       toast({
         title: "Conector registrado!",
         description: "O conector EvoWhats foi registrado com sucesso.",
       });
-      
       await loadStatus();
     } catch (error: any) {
       console.error('Register connector error:', error);
@@ -155,10 +158,10 @@ const OpenChannelsManager = () => {
   };
 
   const handlePublishData = async () => {
-    if (!connectorIconBase64) {
+    if (!iconIsReady) {
       toast({
         title: "Ícone necessário",
-        description: "Aguarde o carregamento do ícone ou tente novamente.",
+        description: "Aguarde o carregamento do ícone (base64) e tente novamente.",
         variant: "destructive",
       });
       return;
@@ -172,21 +175,19 @@ const OpenChannelsManager = () => {
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
-          icon: connectorIconBase64, // base64 cru
+          icon: connectorIconBase64, // base64 cru, limpo
           description: "Integração WhatsApp via Evolution API",
-          // URLs recomendadas pela doc para aparecer no widget/lista
           url: appUrl,
           url_im: appUrl,
-          // Mantém seu webhook (se necessário em outro passo do fluxo)
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
         },
       });
-      
+
       toast({
         title: "Dados publicados!",
         description: "Os dados do conector foram publicados no Bitrix24.",
       });
-      
+
       await loadStatus();
     } catch (error: any) {
       toast({
