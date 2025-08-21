@@ -81,7 +81,18 @@ export async function sendMessage(params: {
   senderName?: string | null;
 }) {
   console.log("[chatApi] sendMessage()", params);
-  const { data, error } = await supabase
+  
+  // Buscar dados da conversa para obter o telefone do contato
+  const { data: conversation, error: convError } = await supabase
+    .from("conversations")
+    .select("contact_phone, evolution_instance")
+    .eq("id", params.conversationId)
+    .single();
+
+  if (convError) throw convError;
+
+  // Criar mensagem no banco primeiro
+  const { data: message, error: msgError } = await supabase
     .from("messages")
     .insert([
       {
@@ -96,13 +107,44 @@ export async function sendMessage(params: {
     .select("*")
     .single()
     .returns<DBMessage>();
-  if (error) throw error;
 
-  // Atualiza last_message_at da conversa
+  if (msgError) throw msgError;
+
+  // Atualizar last_message_at da conversa
   await supabase
     .from("conversations")
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", params.conversationId);
 
-  return data;
+  // Enviar mensagem via Evolution API se houver instância configurada
+  if (conversation.evolution_instance) {
+    try {
+      await supabase.functions.invoke("evolution-connector", {
+        body: {
+          action: "proxy",
+          path: `/message/sendText/${conversation.evolution_instance}`,
+          method: "POST",
+          payload: {
+            number: conversation.contact_phone,
+            text: params.content,
+          },
+        },
+      });
+
+      // Atualizar status da mensagem para entregue
+      await supabase
+        .from("messages")
+        .update({ status: "delivered" })
+        .eq("id", message.id);
+    } catch (error) {
+      console.error("Erro ao enviar via Evolution:", error);
+      // Atualizar status para falha
+      await supabase
+        .from("messages")
+        .update({ status: "failed" })
+        .eq("id", message.id);
+    }
+  }
+
+  return message;
 }

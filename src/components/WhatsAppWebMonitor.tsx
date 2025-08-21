@@ -6,10 +6,13 @@ import { useConversationMonitor } from "@/hooks/useConversationMonitor";
 import ConversationList from "@/components/monitor/ConversationList";
 import MessagesList from "@/components/monitor/MessagesList";
 import MessageInput from "@/components/monitor/MessageInput";
+import NewConversationDialog from "@/components/monitor/NewConversationDialog";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function WhatsAppWebMonitor() {
   const { session } = useSupabaseAuth();
+  const queryClient = useQueryClient();
   const {
     conversations,
     selectedConversation,
@@ -19,6 +22,10 @@ export default function WhatsAppWebMonitor() {
     sendMessage,
     isLoading,
   } = useConversationMonitor();
+
+  const handleConversationCreated = () => {
+    queryClient.invalidateQueries({ queryKey: ["conversations"] });
+  };
 
   if (!session) {
     return (
@@ -37,12 +44,15 @@ export default function WhatsAppWebMonitor() {
       {/* Lista de Conversas */}
       <Card className="lg:col-span-1">
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Users className="h-4 w-4" />
-            Conversas ({conversations.length})
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Users className="h-4 w-4" />
+              Conversas ({conversations.length})
+            </CardTitle>
+            <NewConversationDialog onConversationCreated={handleConversationCreated} />
+          </div>
         </CardHeader>
-        <CardContent className="p-0 h-[calc(100%-4rem)]">
+        <CardContent className="p-0 h-[calc(100%-5rem)]">
           <ConversationList
             conversations={conversations}
             selectedId={selectedConversationId}
@@ -85,6 +95,7 @@ export default function WhatsAppWebMonitor() {
             <div className="text-center text-muted-foreground">
               <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>Selecione uma conversa para começar</p>
+              <p className="text-sm mt-2">ou clique em "Nova Conversa" para iniciar</p>
             </div>
           </CardContent>
         )}
