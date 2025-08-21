@@ -486,6 +486,45 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_sessions: {
+        Row: {
+          bitrix_line_id: string
+          bitrix_line_name: string | null
+          created_at: string
+          evo_instance_id: string
+          id: string
+          last_sync_at: string | null
+          qr_code: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bitrix_line_id: string
+          bitrix_line_name?: string | null
+          created_at?: string
+          evo_instance_id: string
+          id?: string
+          last_sync_at?: string | null
+          qr_code?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bitrix_line_id?: string
+          bitrix_line_name?: string | null
+          created_at?: string
+          evo_instance_id?: string
+          id?: string
+          last_sync_at?: string | null
+          qr_code?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +27,7 @@ import {
   type ConnectorStatus,
 } from "@/services/bitrixOpenChannelsManager";
 import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
+import LineQrManager from "./LineQrManager";
 
 const OpenChannelsManager = () => {
   const { toast } = useToast();
@@ -434,6 +434,14 @@ const OpenChannelsManager = () => {
             </div>
           )}
         </div>
+
+        {/* QR/Conexão por Linha (Evolution) */}
+        {status?.lines && status.lines.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="font-medium">Conexão WhatsApp (Evolution) por Linha</h3>
+            <LineQrManager lines={status.lines} />
+          </div>
+        )}
 
         {/* Instructions */}
         <div className="bg-muted p-4 rounded-lg">
