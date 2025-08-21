@@ -35,10 +35,6 @@ const OpenChannelsManager = () => {
   const [newLineName, setNewLineName] = useState("");
   const [isConnected, setIsConnected] = useState(false);
 
-  // Ícone enviado pelo usuário (convertido para base64 puro)
-  const ICON_PATH = "/lovable-uploads/55b0f757-ec04-4033-9e21-1e94200cf698.png";
-  const [connectorIconBase64, setConnectorIconBase64] = useState<string>("");
-
   const CONNECTOR_ID = "evolution_whatsapp";
   
   // Versão baseada na data atual (formato discreto: v2025.01.21)
@@ -56,58 +52,7 @@ const OpenChannelsManager = () => {
 
   useEffect(() => {
     checkConnection();
-    loadIconAsBase64();
   }, []);
-
-  // Função dedicada para carregar e converter o ícone para base64 puro
-  const loadIconAsBase64 = async () => {
-    try {
-      console.log("[OpenChannelsManager] Loading icon from:", ICON_PATH);
-      
-      const response = await fetch(ICON_PATH);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch icon: ${response.status}`);
-      }
-      
-      const blob = await response.blob();
-      const reader = new FileReader();
-      
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        // Extrair APENAS o base64 puro (após a vírgula)
-        const base64Pure = dataUrl.split(',')[1];
-        
-        if (!base64Pure || base64Pure.length < 100) {
-          throw new Error("Invalid base64 data extracted");
-        }
-        
-        // Garantir que é base64 válido (só caracteres A-Z, a-z, 0-9, +, /, =)
-        const cleanBase64 = base64Pure.replace(/[^A-Za-z0-9+/=]/g, '');
-        
-        console.log("[OpenChannelsManager] Icon converted - length:", cleanBase64.length);
-        console.log("[OpenChannelsManager] First 100 chars:", cleanBase64.substring(0, 100));
-        
-        setConnectorIconBase64(cleanBase64);
-      };
-      
-      reader.onerror = () => {
-        throw new Error("Failed to read file as base64");
-      };
-      
-      reader.readAsDataURL(blob);
-      
-    } catch (error) {
-      console.error("[OpenChannelsManager] Error loading icon:", error);
-      toast({
-        title: "Erro no ícone",
-        description: "Não foi possível carregar o ícone. Usando ícone padrão.",
-        variant: "destructive",
-      });
-      
-      // Fallback: ícone padrão 1x1 pixel transparente em base64 puro
-      setConnectorIconBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==");
-    }
-  };
 
   const checkConnection = async () => {
     try {
@@ -141,29 +86,16 @@ const OpenChannelsManager = () => {
     }
   };
 
-  // Validar se o ícone está pronto (deve ser base64 válido com tamanho razoável)
-  const iconIsReady = connectorIconBase64 && 
-                     connectorIconBase64.length > 1000 && 
-                     /^[A-Za-z0-9+/=]+$/.test(connectorIconBase64);
-
   const handleRegisterConnector = async () => {
-    if (!iconIsReady) {
-      toast({
-        title: "Ícone não está pronto",
-        description: `Aguarde o carregamento do ícone. Status: ${connectorIconBase64.length} chars`,
-        variant: "destructive",
-      });
-      return;
-    }
-
     try {
       setLoading(true);
-      console.log("[OpenChannelsManager] Registering with icon length:", connectorIconBase64.length);
+      console.log("[OpenChannelsManager] Registering connector without base64 icon");
       
+      // Registrar sem ícone base64 - usando apenas classes CSS do Bitrix
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: connectorIconBase64,
+        icon: "", // Vazio - o Bitrix usa classes CSS internas
         chatGroup: "N",
       });
       
@@ -186,15 +118,6 @@ const OpenChannelsManager = () => {
   };
 
   const handlePublishData = async () => {
-    if (!iconIsReady) {
-      toast({
-        title: "Ícone não está pronto",
-        description: "Aguarde o carregamento do ícone base64.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     try {
       setLoading(true);
       const appUrl = window.location.origin || HANDLER_URL;
@@ -203,11 +126,11 @@ const OpenChannelsManager = () => {
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
-          icon: connectorIconBase64,
           description: `Integração WhatsApp via Evolution API ${getCurrentVersion()}`,
           url: appUrl,
           url_im: appUrl,
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
+          // Não enviamos ícone aqui também - deixa o Bitrix usar o sistema interno
         },
       });
 
@@ -370,24 +293,6 @@ const OpenChannelsManager = () => {
         <div className="space-y-4">
           <h3 className="font-medium">Status do Conector</h3>
           
-          {/* Icon Status Indicator */}
-          <div className="flex items-center gap-2 text-sm">
-            <span>Ícone:</span>
-            <Badge variant={iconIsReady ? "default" : "secondary"}>
-              {iconIsReady ? (
-                <>
-                  <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
-                  Pronto ({connectorIconBase64.length} chars)
-                </>
-              ) : (
-                <>
-                  <XCircle className="h-3 w-3 mr-1 text-red-500" />
-                  Carregando...
-                </>
-              )}
-            </Badge>
-          </div>
-          
           {loading ? (
             <p className="text-sm text-muted-foreground">Carregando status...</p>
           ) : status ? (
@@ -427,7 +332,7 @@ const OpenChannelsManager = () => {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleRegisterConnector}
-              disabled={loading || !iconIsReady || status?.registered}
+              disabled={loading || status?.registered}
               variant={status?.registered ? "secondary" : "default"}
             >
               <Zap className="h-4 w-4 mr-2" />
@@ -436,7 +341,7 @@ const OpenChannelsManager = () => {
 
             <Button
               onClick={handlePublishData}
-              disabled={loading || !iconIsReady || !status?.registered || status?.published}
+              disabled={loading || !status?.registered || status?.published}
               variant={status?.published ? "secondary" : "default"}
             >
               <Settings className="h-4 w-4 mr-2" />
@@ -534,16 +439,16 @@ const OpenChannelsManager = () => {
         <div className="bg-muted p-4 rounded-lg">
           <h4 className="font-medium mb-2">Ordem de Configuração:</h4>
           <ol className="text-sm space-y-1">
-            <li>1. Aguardar carregamento do ícone em base64 puro</li>
-            <li>2. Registrar o conector REST "EvoWhats" com versão</li>
-            <li>3. Publicar os dados do conector</li>
-            <li>4. Adicionar tile ao Contact Center</li>
-            <li>5. Criar linhas Open Channels conforme necessário</li>
-            <li>6. Ativar o conector nas linhas desejadas</li>
+            <li>1. Registrar o conector REST "EvoWhats" (sem ícone base64)</li>
+            <li>2. Publicar os dados do conector</li>
+            <li>3. Adicionar tile ao Contact Center</li>
+            <li>4. Criar linhas Open Channels conforme necessário</li>
+            <li>5. Ativar o conector nas linhas desejadas</li>
           </ol>
           <div className="text-xs text-muted-foreground mt-2 space-y-1">
             <p>💡 Versão atual: {getCurrentVersion()}</p>
-            <p>🔧 Ícone convertido para base64 puro (sem prefixos)</p>
+            <p>🔧 Usando sistema de ícones nativo do Bitrix24</p>
+            <p>📌 O ícone será gerenciado automaticamente pelo sistema</p>
           </div>
         </div>
       </CardContent>

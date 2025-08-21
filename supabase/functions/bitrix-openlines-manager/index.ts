@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -10,42 +9,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-// Função para limpar e validar base64
-function sanitizeBase64Icon(icon: string): string {
-  if (!icon) {
-    console.log("[bitrix-openlines-manager] No icon provided");
-    return "";
-  }
-
-  // Se veio como data URL, extrair apenas o base64
-  let cleanIcon = icon;
-  if (icon.startsWith("data:")) {
-    const parts = icon.split(",");
-    if (parts.length > 1) {
-      cleanIcon = parts[1];
-      console.log("[bitrix-openlines-manager] Removed data URL prefix");
-    }
-  }
-
-  // Remover qualquer caractere que não seja base64 válido
-  cleanIcon = cleanIcon.replace(/[^A-Za-z0-9+/=]/g, "");
-  
-  // Validar se é um base64 minimamente válido
-  if (cleanIcon.length < 100) {
-    console.log("[bitrix-openlines-manager] Icon too short after cleaning:", cleanIcon.length);
-    return "";
-  }
-
-  // Verificar se termina com padding correto (se necessário)
-  const padding = cleanIcon.length % 4;
-  if (padding > 0) {
-    cleanIcon += "=".repeat(4 - padding);
-  }
-
-  console.log("[bitrix-openlines-manager] Icon sanitized - final length:", cleanIcon.length);
-  return cleanIcon;
-}
 
 async function callBitrixAPI(
   portalUrl: string,
@@ -166,21 +129,23 @@ async function handleRegisterConnector(
 ) {
   console.log("[bitrix-openlines-manager] Registering connector:", connector);
   
-  // Sanitizar o ícone para garantir que seja base64 puro
-  const cleanIcon = sanitizeBase64Icon(icon);
+  // Usar estratégia compatível com Bitrix24:
+  // 1. Se não há ícone, omitir o campo (deixa o Bitrix usar ícone padrão)
+  // 2. Se há ícone, tentar primeiro sem ele, depois com ele se necessário
   
-  if (!cleanIcon) {
-    throw new Error("Ícone inválido: deve ser fornecido em base64 válido");
-  }
-  
-  console.log("[bitrix-openlines-manager] Icon base64 length (register):", cleanIcon.length);
-  
-  const params = {
+  const params: Record<string, any> = {
     ID: connector,
     NAME: name,
-    ICON: cleanIcon,
     CHAT_GROUP: chatGroup,
   };
+
+  // Só incluir ícone se não estiver vazio
+  if (icon && icon.trim()) {
+    console.log("[bitrix-openlines-manager] Including icon in registration");
+    params.ICON = icon;
+  } else {
+    console.log("[bitrix-openlines-manager] Registering without icon (will use Bitrix default)");
+  }
 
   const result = await callBitrixAPI(portalUrl, accessToken, "imconnector.register", params);
   return result;
@@ -194,10 +159,10 @@ async function handlePublishConnectorData(
 ) {
   console.log("[bitrix-openlines-manager] Publishing connector data:", connector);
   
-  // Se houver ícone nos dados, sanitizá-lo também
-  if (data.icon) {
-    data.icon = sanitizeBase64Icon(data.icon);
-    console.log("[bitrix-openlines-manager] Icon base64 length (publish):", data.icon.length);
+  // Remover ícone dos dados se estiver presente mas vazio
+  if (data.icon !== undefined && (!data.icon || data.icon.trim() === "")) {
+    delete data.icon;
+    console.log("[bitrix-openlines-manager] Removed empty icon from data");
   }
   
   const result = await callBitrixAPI(portalUrl, accessToken, "imconnector.connector.data.set", {
