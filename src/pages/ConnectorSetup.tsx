@@ -1,172 +1,214 @@
 
 import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { QrCode, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
-import { getQrForLine, getStatusForLine, startSessionForLine, ensureLineSession } from "@/services/evolutionConnector";
+import { ArrowLeft, Settings, CheckCircle, AlertTriangle } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import InstanceManager from "@/components/evolution/InstanceManager";
+import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
+import { getOpenChannelsStatus, type ConnectorStatus } from "@/services/bitrixOpenChannelsManager";
 
 export default function ConnectorSetup() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
-  const [lineId, setLineId] = useState<string>("");
-  const [lineName, setLineName] = useState<string>("");
-  const [qrCode, setQrCode] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>("");
+  const [searchParams] = useSearchParams();
+  const [isConnected, setIsConnected] = useState(false);
+  const [channels, setChannels] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Get parameters from URL (sent by Bitrix24)
+  const placement = searchParams.get('PLACEMENT');
+  const placementOptions = searchParams.get('PLACEMENT_OPTIONS');
 
   useEffect(() => {
-    // Pegar parâmetros da URL (enviados pelo Bitrix)
-    const urlParams = new URLSearchParams(window.location.search);
-    const lineIdParam = urlParams.get("LINE_ID");
-    const lineNameParam = urlParams.get("LINE_NAME");
-    
-    if (lineIdParam) {
-      setLineId(lineIdParam);
-      setLineName(lineNameParam || `Linha ${lineIdParam}`);
-      loadQrCode(lineIdParam, lineNameParam || undefined);
-    }
+    checkBitrixConnection();
   }, []);
 
-  const loadQrCode = async (lineId: string, lineName?: string) => {
-    setLoading(true);
+  const checkBitrixConnection = async () => {
     try {
-      // Garantir que a sessão existe
-      await ensureLineSession({ bitrix_line_id: lineId, bitrix_line_name: lineName });
-      
-      // Iniciar a sessão
-      await startSessionForLine({ bitrix_line_id: lineId, bitrix_line_name: lineName });
-      
-      // Buscar QR Code
-      const qrResp = await getQrForLine({ bitrix_line_id: lineId, bitrix_line_name: lineName });
-      const base64 = qrResp?.data?.base64 || qrResp?.data?.qrcode || null;
-      setQrCode(base64);
+      const authStatus = await getBitrixAuthStatus();
+      const connected = authStatus.isConnected && authStatus.hasValidTokens;
+      setIsConnected(connected);
 
-      // Buscar status
-      const statusResp = await getStatusForLine({ bitrix_line_id: lineId, bitrix_line_name: lineName });
-      const state = statusResp?.data?.state || "unknown";
-      setStatus(String(state));
-
-      if (!base64) {
-        toast({
-          title: "QR Code não disponível",
-          description: "Aguardando geração do QR Code. Tente novamente em alguns segundos.",
-          variant: "destructive",
-        });
+      if (connected) {
+        await loadChannels();
       }
-    } catch (error: any) {
-      console.error("Erro ao carregar QR Code:", error);
-      toast({
-        title: "Erro ao carregar QR Code",
-        description: error.message || "Falha ao obter QR Code da linha.",
-        variant: "destructive",
-      });
+    } catch (error) {
+      console.error('Error checking Bitrix connection:', error);
+      setIsConnected(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRefresh = () => {
-    if (lineId) {
-      loadQrCode(lineId, lineName);
+  const loadChannels = async () => {
+    try {
+      const status: ConnectorStatus = await getOpenChannelsStatus();
+      
+      if (status.lines) {
+        const channelList = status.lines.map((line: any) => ({
+          id: line.ID,
+          name: line.NAME
+        }));
+        setChannels(channelList);
+      }
+    } catch (error) {
+      console.error('Error loading channels:', error);
+      toast({
+        title: "Erro ao carregar canais",
+        description: "Não foi possível carregar a lista de canais do Bitrix24.",
+        variant: "destructive",
+      });
     }
   };
 
-  const isConnected = status.toLowerCase().includes("connected") || status.toLowerCase().includes("open");
+  const handleInstanceLinked = () => {
+    toast({
+      title: "Configuração completa!",
+      description: "A instância foi vinculada ao canal com sucesso.",
+    });
+  };
 
-  return (
-    <div className="min-h-screen bg-background p-4">
-      <div className="max-w-2xl mx-auto space-y-6">
+  if (loading) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="container mx-auto p-6 max-w-4xl">
+        <div className="mb-6">
+          <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground mb-4">
+            <ArrowLeft className="h-4 w-4" />
+            Voltar para Dashboard
+          </Link>
+        </div>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <QrCode className="h-5 w-5" />
-              Configuração do WhatsApp - {lineName}
+              <Settings className="h-5 w-5" />
+              Configuração do Conector EvoWhats
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="text-center space-y-4">
-              <div className="flex items-center justify-center gap-2">
-                {isConnected ? (
-                  <Badge className="gap-1">
-                    <CheckCircle2 className="h-3 w-3 text-green-500" />
-                    Conectado
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary" className="gap-1">
-                    <AlertTriangle className="h-3 w-3 text-orange-500" />
-                    Aguardando Conexão
-                  </Badge>
-                )}
-                <Button variant="outline" size="sm" onClick={handleRefresh} disabled={loading}>
-                  <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                  Atualizar
-                </Button>
+          <CardContent>
+            <div className="text-center py-8 space-y-4">
+              <AlertTriangle className="h-12 w-12 text-orange-500 mx-auto" />
+              <div>
+                <h3 className="font-medium">Conexão Bitrix24 necessária</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  É necessário estar conectado ao Bitrix24 para configurar o conector.
+                </p>
               </div>
-
-              {isConnected ? (
-                <div className="space-y-4">
-                  <div className="p-6 bg-green-50 border border-green-200 rounded-lg">
-                    <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-4" />
-                    <h3 className="font-semibold text-green-800">WhatsApp Conectado!</h3>
-                    <p className="text-green-600 mt-2">
-                      Sua linha está conectada e pronta para receber mensagens.
-                    </p>
-                  </div>
-                  <Button 
-                    onClick={() => window.close()} 
-                    className="w-full"
-                  >
-                    Finalizar Configuração
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {loading ? (
-                    <div className="flex items-center justify-center p-8">
-                      <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
-                      <span className="ml-2 text-muted-foreground">Carregando QR Code...</span>
-                    </div>
-                  ) : qrCode ? (
-                    <div className="space-y-4">
-                      <div className="bg-white p-6 rounded-lg border-2 border-dashed border-muted-foreground/25 inline-block mx-auto">
-                        <img
-                          src={`data:image/png;base64,${qrCode}`}
-                          alt="QR Code WhatsApp"
-                          className="w-64 h-64 mx-auto"
-                        />
-                      </div>
-                      <div className="space-y-2 text-center">
-                        <h3 className="font-semibold">Escaneie o QR Code</h3>
-                        <ol className="text-sm text-muted-foreground space-y-1 text-left max-w-md mx-auto">
-                          <li>1. Abra o WhatsApp no seu celular</li>
-                          <li>2. Toque em Menu (⋮) ou Configurações</li>
-                          <li>3. Toque em "Aparelhos conectados"</li>
-                          <li>4. Toque em "Conectar um aparelho"</li>
-                          <li>5. Aponte a câmera para o QR Code acima</li>
-                        </ol>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center p-8">
-                      <AlertTriangle className="h-12 w-12 text-orange-500 mx-auto mb-4" />
-                      <p className="text-muted-foreground">
-                        Não foi possível gerar o QR Code. Clique em "Atualizar" para tentar novamente.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="text-xs text-muted-foreground bg-muted p-3 rounded">
-              <p><strong>Linha:</strong> {lineName}</p>
-              <p><strong>ID:</strong> {lineId}</p>
-              <p><strong>Status:</strong> {status}</p>
+              <Link to="/">
+                <Button>
+                  Ir para Configurações
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>
       </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto p-6 max-w-6xl">
+      <div className="mb-6">
+        <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground mb-4">
+          <ArrowLeft className="h-4 w-4" />
+          Voltar para Dashboard
+        </Link>
+        
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Configuração do Conector EvoWhats</h1>
+            <p className="text-muted-foreground mt-1">
+              Configure suas instâncias WhatsApp e vincule-as aos canais do Bitrix24
+            </p>
+          </div>
+          
+          {placement && (
+            <Badge variant="outline" className="flex items-center gap-1">
+              <CheckCircle className="h-3 w-3" />
+              Integração Bitrix24
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      {/* URL Parameters Info (for debugging) */}
+      {placement && (
+        <Card className="mb-6">
+          <CardContent className="pt-4">
+            <div className="text-sm space-y-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="font-medium">Placement:</span> {placement}
+                </div>
+                {placementOptions && (
+                  <div>
+                    <span className="font-medium">Options:</span> {placementOptions}
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Instructions */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="text-lg">Como configurar</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ol className="list-decimal list-inside space-y-2 text-sm">
+            <li>Crie uma nova instância WhatsApp com um nome descritivo</li>
+            <li>Clique em "Conectar" para gerar o QR Code</li>
+            <li>Escaneie o QR Code com seu WhatsApp</li>
+            <li>Após conectar, vincule a instância a um canal do Bitrix24</li>
+            <li>Repita o processo para cada canal que desejar</li>
+          </ol>
+        </CardContent>
+      </Card>
+
+      {/* Instance Manager */}
+      <InstanceManager 
+        showLinkOptions={channels.length > 0}
+        availableChannels={channels}
+        onInstanceSelect={handleInstanceLinked}
+      />
+
+      {/* Available Channels */}
+      {channels.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Canais Disponíveis no Bitrix24</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {channels.map((channel) => (
+                <Card key={channel.id} className="p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-medium">{channel.name}</h4>
+                      <p className="text-sm text-muted-foreground">ID: {channel.id}</p>
+                    </div>
+                    <Badge variant="secondary">Canal</Badge>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

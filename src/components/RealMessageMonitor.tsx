@@ -3,135 +3,52 @@ import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, RefreshCw, Clock, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
-
-interface EventLog {
-  id: string;
-  event_type: string;
-  event_data: any;
-  status: string;
-  error_message?: string;
-  created_at: string;
-  processed_at?: string;
-}
+import { MessageSquare, RefreshCw, Phone, Clock, CheckCircle, Smartphone } from "lucide-react";
+import { useEvolutionRealTime } from "@/hooks/useEvolutionRealTime";
+import { evolutionInstanceManager } from "@/services/evolutionInstances";
 
 const RealMessageMonitor = () => {
-  const [events, setEvents] = useState<EventLog[]>([]);
-  const [loading, setLoading] = useState(false);
-  const { toast } = useToast();
-
-  const loadEvents = async () => {
-    try {
-      setLoading(true);
-      
-      const { data, error } = await supabase
-        .from('bitrix_event_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      if (error) throw error;
-
-      setEvents(data || []);
-    } catch (error: any) {
-      console.error('Error loading events:', error);
-      toast({
-        title: "Erro ao carregar eventos",
-        description: error.message || "Falha ao buscar logs de eventos",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { connectedInstances, messages } = useEvolutionRealTime();
+  const [instances, setInstances] = useState<any[]>([]);
 
   useEffect(() => {
-    loadEvents();
-    
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(loadEvents, 10000);
-    
-    // Real-time subscription
-    const subscription = supabase
-      .channel('bitrix_events')
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'bitrix_event_logs'
-      }, (payload) => {
-        console.log('New event received:', payload);
-        setEvents(prev => [payload.new as EventLog, ...prev.slice(0, 19)]);
-      })
-      .subscribe();
-
-    return () => {
-      clearInterval(interval);
-      subscription.unsubscribe();
-    };
+    const unsubscribe = evolutionInstanceManager.subscribe(setInstances);
+    return unsubscribe;
   }, []);
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'processed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'failed':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      case 'pending':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      default:
-        return <AlertTriangle className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, any> = {
-      processed: "default",
-      failed: "destructive", 
-      pending: "secondary"
-    };
-    return variants[status] || "outline";
-  };
-
-  const formatEventData = (eventType: string, eventData: any) => {
-    try {
-      switch (eventType) {
-        case 'message_received':
-          const msgData = eventData?.message_data;
-          const contactNumber = msgData?.key?.remoteJid?.replace('@s.whatsapp.net', '') || 'Unknown';
-          const messageText = msgData?.message?.conversation || 
-                             msgData?.message?.extendedTextMessage?.text || 
-                             'Media message';
-          return {
-            contact: contactNumber,
-            message: messageText.substring(0, 100) + (messageText.length > 100 ? '...' : ''),
-            line: eventData?.line_id || 'N/A'
-          };
-        case 'connector_webhook':
-          return {
-            action: eventData?.action || 'Unknown',
-            result: eventData?.result ? 'Success' : 'Failed',
-            line: eventData?.line_id || 'N/A'
-          };
-        default:
-          return {
-            data: JSON.stringify(eventData).substring(0, 100) + '...'
-          };
-      }
-    } catch (error) {
-      return { error: 'Failed to parse event data' };
-    }
-  };
 
   const formatTime = (timestamp: string) => {
     return new Date(timestamp).toLocaleString('pt-BR', {
       day: '2-digit',
-      month: '2-digit', 
+      month: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit'
     });
+  };
+
+  const formatPhoneNumber = (number: string) => {
+    // Format Brazilian phone numbers
+    if (number && number.length >= 10) {
+      const cleaned = number.replace(/\D/g, '');
+      if (cleaned.length === 11) {
+        return `+55 (${cleaned.slice(0,2)}) ${cleaned.slice(2,7)}-${cleaned.slice(7)}`;
+      }
+      if (cleaned.length === 10) {
+        return `+55 (${cleaned.slice(0,2)}) ${cleaned.slice(2,6)}-${cleaned.slice(6)}`;
+      }
+    }
+    return number;
+  };
+
+  const getMessageTypeColor = (type: string) => {
+    switch (type) {
+      case 'text': return 'bg-blue-100 text-blue-800';
+      case 'image': return 'bg-green-100 text-green-800';
+      case 'audio': return 'bg-purple-100 text-purple-800';
+      case 'video': return 'bg-red-100 text-red-800';
+      case 'document': return 'bg-orange-100 text-orange-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
   };
 
   return (
@@ -140,87 +57,109 @@ const RealMessageMonitor = () => {
         <CardTitle className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MessageSquare className="h-5 w-5" />
-            Monitor de Mensagens Reais
+            Monitor de Mensagens em Tempo Real
           </div>
-          <Button
-            onClick={loadEvents}
-            variant="outline"
-            size="sm"
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-            Atualizar
-          </Button>
+          <div className="flex items-center gap-2">
+            {connectedInstances.length > 0 ? (
+              <Badge className="flex items-center gap-1">
+                <CheckCircle className="h-3 w-3" />
+                {connectedInstances.length} conectada(s)
+              </Badge>
+            ) : (
+              <Badge variant="secondary">Nenhuma instância conectada</Badge>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {loading && events.length === 0 ? (
-          <div className="text-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-            <p className="text-sm text-muted-foreground mt-2">Carregando eventos...</p>
-          </div>
-        ) : events.length === 0 ? (
-          <div className="text-center py-8">
-            <MessageSquare className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-medium">Nenhum evento registrado</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              Os eventos de mensagens e webhook aparecerão aqui em tempo real.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {events.map((event) => {
-              const formattedData = formatEventData(event.event_type, event.event_data);
-              
-              return (
-                <div key={event.id} className="border rounded-lg p-3 bg-card">
+        {/* Connection Status */}
+        <div className="mb-6">
+          <h3 className="font-medium mb-3">Status das Instâncias</h3>
+          {instances.length === 0 ? (
+            <div className="text-center py-4 text-muted-foreground">
+              <Smartphone className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Nenhuma instância criada</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {instances.map((instance) => (
+                <div key={instance.instanceName} className="flex items-center gap-2 p-2 border rounded">
+                  <div className={`w-2 h-2 rounded-full ${
+                    instance.status === 'connected' ? 'bg-green-500' : 
+                    instance.status === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                    'bg-gray-400'
+                  }`} />
+                  <span className="text-sm font-medium">{instance.instanceName}</span>
+                  <Badge variant="outline" className="text-xs ml-auto">
+                    {instance.status === 'connected' ? 'Online' :
+                     instance.status === 'connecting' ? 'Conectando' :
+                     instance.status === 'qr_ready' ? 'Aguardando QR' : 'Offline'}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Messages */}
+        <div>
+          <h3 className="font-medium mb-3">Mensagens Recentes</h3>
+          {messages.length === 0 ? (
+            <div className="text-center py-8">
+              <MessageSquare className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="font-medium">Nenhuma mensagem ainda</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                {connectedInstances.length > 0 
+                  ? "As mensagens aparecerão aqui em tempo real quando chegarem."
+                  : "Conecte uma instância WhatsApp para receber mensagens."
+                }
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {messages.map((message) => (
+                <div key={message.id} className="border rounded-lg p-3 bg-card">
                   <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(event.status)}
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">
-                            {event.event_type.replace('_', ' ').toUpperCase()}
-                          </span>
-                          <Badge variant={getStatusBadge(event.status)}>
-                            {event.status}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {formatTime(event.created_at)}
-                        </p>
-                      </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="outline" className="text-xs">
+                        {message.instanceName}
+                      </Badge>
+                      <Badge className={`text-xs ${getMessageTypeColor(message.messageType)}`}>
+                        {message.messageType.toUpperCase()}
+                      </Badge>
+                      <Badge variant={message.isFromMe ? "default" : "secondary"} className="text-xs">
+                        {message.isFromMe ? "Enviada" : "Recebida"}
+                      </Badge>
                     </div>
+                    <span className="text-xs text-muted-foreground">
+                      {formatTime(message.timestamp)}
+                    </span>
                   </div>
                   
-                  <div className="mt-2 text-sm">
-                    {event.event_type === 'message_received' && (
-                      <div className="space-y-1">
-                        <p><strong>Contato:</strong> {formattedData.contact}</p>
-                        <p><strong>Linha:</strong> {formattedData.line}</p>
-                        <p><strong>Mensagem:</strong> "{formattedData.message}"</p>
-                      </div>
-                    )}
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-3 w-3 text-muted-foreground" />
+                      <span className="font-medium">
+                        {formatPhoneNumber(message.isFromMe ? message.toNumber : message.fromNumber)}
+                      </span>
+                      {message.isFromMe && message.toNumber && (
+                        <span className="text-muted-foreground">← para {formatPhoneNumber(message.toNumber)}</span>
+                      )}
+                    </div>
                     
-                    {event.event_type === 'connector_webhook' && (
-                      <div className="space-y-1">
-                        <p><strong>Ação:</strong> {formattedData.action}</p>
-                        <p><strong>Resultado:</strong> {formattedData.result}</p>
-                        <p><strong>Linha:</strong> {formattedData.line}</p>
-                      </div>
-                    )}
-                    
-                    {event.error_message && (
-                      <p className="text-red-600 text-xs mt-1">
-                        <strong>Erro:</strong> {event.error_message}
-                      </p>
-                    )}
+                    <div className="bg-muted p-2 rounded text-sm">
+                      {message.messageType === 'text' ? (
+                        <span>"{message.message}"</span>
+                      ) : (
+                        <span className="italic">[{message.messageType.toUpperCase()}] {message.message}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
