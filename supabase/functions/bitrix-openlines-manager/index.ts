@@ -1,4 +1,3 @@
-
 /* Supabase Edge Function: bitrix-openlines-manager
    - Gerencia o fluxo oficial de Open Channels do Bitrix24
    - Registra conectores REST, publica dados, adiciona tiles ao Contact Center
@@ -189,19 +188,16 @@ async function handleGetStatus(portalUrl: string, accessToken: string) {
 async function handleRegisterConnector(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Registering connector:", params.connector);
   
-  // Process icon: extract base64 data if it's a data URL
   let iconBase64 = "";
   if (params.icon) {
     if (typeof params.icon === "string") {
       if (params.icon.startsWith("data:image/")) {
-        // Extract base64 part after comma
         const base64Match = params.icon.match(/^data:image\/[^;]+;base64,(.+)$/);
         if (base64Match) {
           iconBase64 = base64Match[1];
         }
       } else {
-        // Assume it's already base64
-        iconBase64 = params.icon;
+        iconBase64 = params.icon; // já é base64 cru
       }
     }
   }
@@ -223,7 +219,7 @@ async function handleRegisterConnector(portalUrl: string, accessToken: string, p
 async function handlePublishConnectorData(portalUrl: string, accessToken: string, params: any) {
   console.log("[bitrix-openlines-manager] Publishing connector data:", params.connector);
   
-  // Process icon for publishing
+  // Extrair base64 cru se vier como data URL
   let iconBase64 = "";
   if (params.data && params.data.icon) {
     if (typeof params.data.icon === "string") {
@@ -238,11 +234,11 @@ async function handlePublishConnectorData(portalUrl: string, accessToken: string
     }
   }
 
-  const publishData = {
-    ...params.data,
-    icon: iconBase64
-  };
-  
+  const publishData: Record<string, any> = { ...params.data };
+  if (iconBase64) {
+    publishData.icon = iconBase64; // só sobrescreve se houver base64 cru válido
+  }
+
   const result = await callBitrixAPI(portalUrl, "imconnector.connector.data.set", accessToken, {
     CONNECTOR: params.connector,
     DATA: publishData

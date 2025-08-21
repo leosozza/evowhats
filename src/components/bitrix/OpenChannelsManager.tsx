@@ -36,9 +36,9 @@ const OpenChannelsManager = () => {
   const [newLineName, setNewLineName] = useState("");
   const [isConnected, setIsConnected] = useState(false);
 
-  // Ícone enviado pelo usuário (convertido p/ base64 em tempo de execução)
+  // Ícone enviado pelo usuário (convertido p/ base64 cru)
   const ICON_PATH = "/lovable-uploads/55b0f757-ec04-4033-9e21-1e94200cf698.png";
-  const [connectorIconBase64, setConnectorIconBase64] = useState<string>("");
+  const [connectorIconBase64, setConnectorIconBase64] = useState<string>(""); // manteremos aqui o base64 cru (sem prefixo)
 
   const CONNECTOR_ID = "evolution_whatsapp";
   const CONNECTOR_NAME = "EvoWhats";
@@ -47,11 +47,14 @@ const OpenChannelsManager = () => {
 
   useEffect(() => {
     checkConnection();
-    // Carregar ícone como base64
+    // Carregar ícone e armazenar como base64 cru
     loadIconBase64(ICON_PATH)
-      .then((dataUrl) => {
-        console.log("[OpenChannelsManager] Icon base64 loaded (length):", dataUrl?.length);
-        setConnectorIconBase64(dataUrl);
+      .then((dataUrlOrRaw) => {
+        const raw = dataUrlOrRaw.startsWith("data:")
+          ? (dataUrlOrRaw.split(",")[1] || "")
+          : dataUrlOrRaw;
+        console.log("[OpenChannelsManager] Icon base64 (raw) length:", raw.length);
+        setConnectorIconBase64(raw);
       })
       .catch((e) => {
         console.error("[OpenChannelsManager] Failed to load base64 icon:", e);
@@ -70,13 +73,13 @@ const OpenChannelsManager = () => {
       const blob = await resp.blob();
       return await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
+        reader.onloadend = () => resolve(reader.result as string); // retorna data URL
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
     } catch (error) {
       console.error("[OpenChannelsManager] Error loading icon:", error);
-      // Return a default base64 icon if loading fails
+      // base64 cru mínimo (1x1 px) sem prefixo
       return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
     }
   }
@@ -88,7 +91,7 @@ const OpenChannelsManager = () => {
       setIsConnected(connected);
       
       if (connected) {
-        await loadStatus();
+        await loadStatus(); // não depender do state isConnected dentro de loadStatus
       }
     } catch (error) {
       console.error('Error checking connection:', error);
@@ -97,8 +100,7 @@ const OpenChannelsManager = () => {
   };
 
   const loadStatus = async () => {
-    if (!isConnected) return;
-    
+    // Removemos o early return para evitar depender do timing do setState de isConnected
     try {
       setLoading(true);
       const currentStatus = await getOpenChannelsStatus();
@@ -130,7 +132,7 @@ const OpenChannelsManager = () => {
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: connectorIconBase64,
+        icon: connectorIconBase64, // base64 cru, sem prefixo
         chatGroup: "N",
       });
       
@@ -164,12 +166,18 @@ const OpenChannelsManager = () => {
 
     try {
       setLoading(true);
+      const appUrl = window.location.origin || HANDLER_URL;
+
       await publishConnectorData({
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
-          icon: connectorIconBase64,
+          icon: connectorIconBase64, // base64 cru
           description: "Integração WhatsApp via Evolution API",
+          // URLs recomendadas pela doc para aparecer no widget/lista
+          url: appUrl,
+          url_im: appUrl,
+          // Mantém seu webhook (se necessário em outro passo do fluxo)
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
         },
       });
@@ -485,7 +493,7 @@ const OpenChannelsManager = () => {
             <li>5. Ativar o conector nas linhas desejadas</li>
           </ol>
           <p className="text-xs text-muted-foreground mt-2">
-            💡 O ícone do conector é carregado automaticamente. Certifique-se de que sua conta Bitrix24 possui os escopos necessários.
+            💡 O ícone do conector é carregado automaticamente em base64 cru, como recomendado pela documentação do Bitrix24.
           </p>
         </div>
       </CardContent>
