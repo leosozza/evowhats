@@ -1,6 +1,6 @@
 
 import React from "react";
-import { Avatar, AvatarFallback, AvatarInitials } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DBConversation } from "@/services/chatApi";
@@ -56,9 +56,6 @@ export default function ConversationList({ conversations, selectedId, onSelect }
             }`}
           >
             <Avatar className="h-12 w-12">
-              <AvatarInitials>
-                {getContactInitials(conversation)}
-              </AvatarInitials>
               <AvatarFallback>
                 {getContactInitials(conversation)}
               </AvatarFallback>
