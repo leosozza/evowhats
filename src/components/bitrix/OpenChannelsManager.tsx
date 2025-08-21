@@ -35,57 +35,79 @@ const OpenChannelsManager = () => {
   const [newLineName, setNewLineName] = useState("");
   const [isConnected, setIsConnected] = useState(false);
 
-  // Ícone enviado pelo usuário (convertido p/ base64 cru)
+  // Ícone enviado pelo usuário (convertido para base64 puro)
   const ICON_PATH = "/lovable-uploads/55b0f757-ec04-4033-9e21-1e94200cf698.png";
   const [connectorIconBase64, setConnectorIconBase64] = useState<string>("");
 
   const CONNECTOR_ID = "evolution_whatsapp";
-  const CONNECTOR_NAME = "EvoWhats";
+  
+  // Versão baseada na data atual (formato discreto: v2025.01.21)
+  const getCurrentVersion = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `v${year}.${month}.${day}`;
+  };
+  
+  const CONNECTOR_NAME = `EvoWhats ${getCurrentVersion()}`;
   const PLACEMENT = "CONTACT_CENTER";
   const HANDLER_URL = "https://evowhats-61.lovable.app";
 
   useEffect(() => {
     checkConnection();
-    // Carregar ícone e armazenar como base64 cru, limpo
-    loadIconBase64(ICON_PATH)
-      .then((dataUrlOrRaw) => {
-        const raw = dataUrlOrRaw.startsWith("data:")
-          ? (dataUrlOrRaw.split(",")[1] || "")
-          : dataUrlOrRaw;
-        // Remove qualquer caractere fora do alfabeto base64 e whitespaces
-        const cleaned = raw.replace(/[^A-Za-z0-9+/=]/g, "");
-        console.log("[OpenChannelsManager] Icon base64 (raw) length:", cleaned.length);
-        setConnectorIconBase64(cleaned);
-      })
-      .catch((e) => {
-        console.error("[OpenChannelsManager] Failed to load base64 icon:", e);
-        toast({
-          title: "Aviso",
-          description: "Não foi possível carregar o ícone. Usando ícone padrão.",
-          variant: "default",
-        });
-        // fallback 1x1 px base64 cru
-        setConnectorIconBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==");
-      });
+    loadIconAsBase64();
   }, []);
 
-  async function loadIconBase64(path: string): Promise<string> {
+  // Função dedicada para carregar e converter o ícone para base64 puro
+  const loadIconAsBase64 = async () => {
     try {
-      const resp = await fetch(path);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      return await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string); // retorna data URL
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      console.log("[OpenChannelsManager] Loading icon from:", ICON_PATH);
+      
+      const response = await fetch(ICON_PATH);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch icon: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const reader = new FileReader();
+      
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        // Extrair APENAS o base64 puro (após a vírgula)
+        const base64Pure = dataUrl.split(',')[1];
+        
+        if (!base64Pure || base64Pure.length < 100) {
+          throw new Error("Invalid base64 data extracted");
+        }
+        
+        // Garantir que é base64 válido (só caracteres A-Z, a-z, 0-9, +, /, =)
+        const cleanBase64 = base64Pure.replace(/[^A-Za-z0-9+/=]/g, '');
+        
+        console.log("[OpenChannelsManager] Icon converted - length:", cleanBase64.length);
+        console.log("[OpenChannelsManager] First 100 chars:", cleanBase64.substring(0, 100));
+        
+        setConnectorIconBase64(cleanBase64);
+      };
+      
+      reader.onerror = () => {
+        throw new Error("Failed to read file as base64");
+      };
+      
+      reader.readAsDataURL(blob);
+      
     } catch (error) {
       console.error("[OpenChannelsManager] Error loading icon:", error);
-      // base64 cru mínimo (1x1 px) sem prefixo
-      return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+      toast({
+        title: "Erro no ícone",
+        description: "Não foi possível carregar o ícone. Usando ícone padrão.",
+        variant: "destructive",
+      });
+      
+      // Fallback: ícone padrão 1x1 pixel transparente em base64 puro
+      setConnectorIconBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==");
     }
-  }
+  };
 
   const checkConnection = async () => {
     try {
@@ -94,7 +116,7 @@ const OpenChannelsManager = () => {
       setIsConnected(connected);
       
       if (connected) {
-        await loadStatus(); // não depender do state isConnected dentro de loadStatus
+        await loadStatus();
       }
     } catch (error) {
       console.error('Error checking connection:', error);
@@ -103,7 +125,6 @@ const OpenChannelsManager = () => {
   };
 
   const loadStatus = async () => {
-    // Removemos o early return para evitar depender do timing do setState de isConnected
     try {
       setLoading(true);
       const currentStatus = await getOpenChannelsStatus();
@@ -120,13 +141,16 @@ const OpenChannelsManager = () => {
     }
   };
 
-  const iconIsReady = connectorIconBase64 && connectorIconBase64.length > 100;
+  // Validar se o ícone está pronto (deve ser base64 válido com tamanho razoável)
+  const iconIsReady = connectorIconBase64 && 
+                     connectorIconBase64.length > 1000 && 
+                     /^[A-Za-z0-9+/=]+$/.test(connectorIconBase64);
 
   const handleRegisterConnector = async () => {
     if (!iconIsReady) {
       toast({
-        title: "Ícone necessário",
-        description: "Aguarde o carregamento do ícone (base64) e tente novamente.",
+        title: "Ícone não está pronto",
+        description: `Aguarde o carregamento do ícone. Status: ${connectorIconBase64.length} chars`,
         variant: "destructive",
       });
       return;
@@ -134,16 +158,20 @@ const OpenChannelsManager = () => {
 
     try {
       setLoading(true);
+      console.log("[OpenChannelsManager] Registering with icon length:", connectorIconBase64.length);
+      
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: connectorIconBase64, // base64 cru, sem prefixo e limpo
+        icon: connectorIconBase64,
         chatGroup: "N",
       });
+      
       toast({
         title: "Conector registrado!",
-        description: "O conector EvoWhats foi registrado com sucesso.",
+        description: `O conector ${CONNECTOR_NAME} foi registrado com sucesso.`,
       });
+      
       await loadStatus();
     } catch (error: any) {
       console.error('Register connector error:', error);
@@ -160,8 +188,8 @@ const OpenChannelsManager = () => {
   const handlePublishData = async () => {
     if (!iconIsReady) {
       toast({
-        title: "Ícone necessário",
-        description: "Aguarde o carregamento do ícone (base64) e tente novamente.",
+        title: "Ícone não está pronto",
+        description: "Aguarde o carregamento do ícone base64.",
         variant: "destructive",
       });
       return;
@@ -175,8 +203,8 @@ const OpenChannelsManager = () => {
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
-          icon: connectorIconBase64, // base64 cru, limpo
-          description: "Integração WhatsApp via Evolution API",
+          icon: connectorIconBase64,
+          description: `Integração WhatsApp via Evolution API ${getCurrentVersion()}`,
           url: appUrl,
           url_im: appUrl,
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
@@ -341,6 +369,25 @@ const OpenChannelsManager = () => {
         {/* Status Section */}
         <div className="space-y-4">
           <h3 className="font-medium">Status do Conector</h3>
+          
+          {/* Icon Status Indicator */}
+          <div className="flex items-center gap-2 text-sm">
+            <span>Ícone:</span>
+            <Badge variant={iconIsReady ? "default" : "secondary"}>
+              {iconIsReady ? (
+                <>
+                  <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
+                  Pronto ({connectorIconBase64.length} chars)
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-3 w-3 mr-1 text-red-500" />
+                  Carregando...
+                </>
+              )}
+            </Badge>
+          </div>
+          
           {loading ? (
             <p className="text-sm text-muted-foreground">Carregando status...</p>
           ) : status ? (
@@ -380,7 +427,7 @@ const OpenChannelsManager = () => {
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleRegisterConnector}
-              disabled={loading || status?.registered}
+              disabled={loading || !iconIsReady || status?.registered}
               variant={status?.registered ? "secondary" : "default"}
             >
               <Zap className="h-4 w-4 mr-2" />
@@ -389,7 +436,7 @@ const OpenChannelsManager = () => {
 
             <Button
               onClick={handlePublishData}
-              disabled={loading || !status?.registered || status?.published}
+              disabled={loading || !iconIsReady || !status?.registered || status?.published}
               variant={status?.published ? "secondary" : "default"}
             >
               <Settings className="h-4 w-4 mr-2" />
@@ -487,15 +534,17 @@ const OpenChannelsManager = () => {
         <div className="bg-muted p-4 rounded-lg">
           <h4 className="font-medium mb-2">Ordem de Configuração:</h4>
           <ol className="text-sm space-y-1">
-            <li>1. Registrar o conector REST "EvoWhats"</li>
-            <li>2. Publicar os dados do conector</li>
-            <li>3. Adicionar tile ao Contact Center</li>
-            <li>4. Criar linhas Open Channels conforme necessário</li>
-            <li>5. Ativar o conector nas linhas desejadas</li>
+            <li>1. Aguardar carregamento do ícone em base64 puro</li>
+            <li>2. Registrar o conector REST "EvoWhats" com versão</li>
+            <li>3. Publicar os dados do conector</li>
+            <li>4. Adicionar tile ao Contact Center</li>
+            <li>5. Criar linhas Open Channels conforme necessário</li>
+            <li>6. Ativar o conector nas linhas desejadas</li>
           </ol>
-          <p className="text-xs text-muted-foreground mt-2">
-            💡 O ícone do conector é carregado automaticamente em base64 cru, como recomendado pela documentação do Bitrix24.
-          </p>
+          <div className="text-xs text-muted-foreground mt-2 space-y-1">
+            <p>💡 Versão atual: {getCurrentVersion()}</p>
+            <p>🔧 Ícone convertido para base64 puro (sem prefixos)</p>
+          </div>
         </div>
       </CardContent>
     </Card>
