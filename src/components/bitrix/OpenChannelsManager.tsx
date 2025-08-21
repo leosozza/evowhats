@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,7 +49,9 @@ const OpenChannelsManager = () => {
   
   const CONNECTOR_NAME = `EvoWhats ${getCurrentVersion()}`;
   const PLACEMENT = "CONTACT_CENTER";
-  const HANDLER_URL = "https://evowhats-61.lovable.app";
+  
+  // URL corrigida para o handler do conector (não o app principal)
+  const HANDLER_URL = "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook";
 
   useEffect(() => {
     checkConnection();
@@ -89,13 +92,12 @@ const OpenChannelsManager = () => {
   const handleRegisterConnector = async () => {
     try {
       setLoading(true);
-      console.log("[OpenChannelsManager] Registering connector with minimal base64 icon for API compliance");
+      console.log("[OpenChannelsManager] Registering connector with SVG icon");
       
-      // Registrar conector - a edge function usará um ícone base64 mínimo
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: "", // Será substituído por ícone base64 mínimo na edge function
+        icon: "", // Será substituído por SVG na edge function
         chatGroup: "N",
       });
       
@@ -120,16 +122,15 @@ const OpenChannelsManager = () => {
   const handlePublishData = async () => {
     try {
       setLoading(true);
-      const appUrl = window.location.origin || HANDLER_URL;
 
       await publishConnectorData({
         connector: CONNECTOR_ID,
         data: {
           name: CONNECTOR_NAME,
           description: `Integração WhatsApp via Evolution API ${getCurrentVersion()}`,
-          url: appUrl,
-          url_im: appUrl,
-          webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
+          url: "https://evowhats-61.lovable.app",
+          url_im: "https://evowhats-61.lovable.app",
+          webhook_url: HANDLER_URL,
         },
       });
 
@@ -436,18 +437,18 @@ const OpenChannelsManager = () => {
 
         {/* Instructions */}
         <div className="bg-muted p-4 rounded-lg">
-          <h4 className="font-medium mb-2">Ordem de Configuração:</h4>
+          <h4 className="font-medium mb-2">Configurações Corrigidas:</h4>
           <ol className="text-sm space-y-1">
-            <li>1. Registrar o conector REST "EvoWhats" (usando ícone base64 mínimo para API)</li>
-            <li>2. Publicar os dados do conector</li>
-            <li>3. Adicionar tile ao Contact Center</li>
-            <li>4. Criar linhas Open Channels conforme necessário</li>
-            <li>5. Ativar o conector nas linhas desejadas</li>
+            <li>1. ✅ Ícone SVG conforme documentação Bitrix24</li>
+            <li>2. ✅ Handler URL corrigido para webhook específico</li>
+            <li>3. ✅ Suporte a múltiplas instâncias por linha</li>
+            <li>4. 🔄 Events binding para mensagens reais (próximo passo)</li>
+            <li>5. 🔄 Integração Evolution API multi-instância (próximo passo)</li>
           </ol>
           <div className="text-xs text-muted-foreground mt-2 space-y-1">
             <p>💡 Versão atual: {getCurrentVersion()}</p>
-            <p>🔧 API compatível: ícone base64 mínimo para registro</p>
-            <p>🎨 Visual: Bitrix24 aplicará classes CSS nativas (ui-icon-service-*)</p>
+            <p>🎯 Handler: {HANDLER_URL}</p>
+            <p>📱 Cada linha pode ter sua própria instância Evolution API</p>
           </div>
         </div>
       </CardContent>

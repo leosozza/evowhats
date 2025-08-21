@@ -4,12 +4,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConnectionStatus from "./ConnectionStatus";
 import ConfigurationPanel from "./ConfigurationPanel";
 import MessageMonitor from "./MessageMonitor";
+import RealMessageMonitor from "./RealMessageMonitor";
 import OpenChannelsManager from "./bitrix/OpenChannelsManager";
 import { 
   Activity, 
   Settings, 
   MessageSquare,
-  Zap
+  Zap,
+  Radio
 } from "lucide-react";
 
 const Dashboard = () => {
@@ -23,7 +25,7 @@ const Dashboard = () => {
       </div>
 
       <Tabs defaultValue="connections" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="connections" className="flex items-center gap-2">
             <Activity className="h-4 w-4" />
             Conexões
@@ -35,6 +37,10 @@ const Dashboard = () => {
           <TabsTrigger value="messages" className="flex items-center gap-2">
             <Zap className="h-4 w-4" />
             Mensagens
+          </TabsTrigger>
+          <TabsTrigger value="real-messages" className="flex items-center gap-2">
+            <Radio className="h-4 w-4" />
+            Monitor Real
           </TabsTrigger>
           <TabsTrigger value="settings" className="flex items-center gap-2">
             <Settings className="h-4 w-4" />
@@ -52,6 +58,10 @@ const Dashboard = () => {
 
         <TabsContent value="messages" className="mt-6">
           <MessageMonitor />
+        </TabsContent>
+
+        <TabsContent value="real-messages" className="mt-6">
+          <RealMessageMonitor />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-6">

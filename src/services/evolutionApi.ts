@@ -6,12 +6,19 @@ export interface InstanceInfo {
   status: string;
   qrCode?: string;
   owner?: string;
+  lineId?: string;
 }
 
 export interface ConnectionTest {
   success: boolean;
   message: string;
   instanceInfo?: InstanceInfo;
+}
+
+export interface MultiInstanceStatus {
+  instances: InstanceInfo[];
+  totalConnected: number;
+  totalDisconnected: number;
 }
 
 export async function testEvolutionConnection(
@@ -23,7 +30,8 @@ export async function testEvolutionConnection(
     // Test connection via our edge function
     const response = await supabase.functions.invoke('evolution-connector', {
       body: {
-        action: 'get_status'
+        action: 'get_status',
+        instanceName
       }
     });
 
@@ -69,11 +77,90 @@ export async function testEvolutionConnection(
   }
 }
 
-export async function getInstanceQRCode(): Promise<{ success: boolean; qrCode?: string; message: string }> {
+export async function getMultiInstanceStatus(): Promise<MultiInstanceStatus> {
   try {
     const response = await supabase.functions.invoke('evolution-connector', {
       body: {
-        action: 'get_qr'
+        action: 'get_all_instances'
+      }
+    });
+
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+
+    if (response.data?.ok) {
+      const instances = response.data.data?.instances || [];
+      const connected = instances.filter((i: any) => i.status === 'open').length;
+      const disconnected = instances.length - connected;
+      
+      return {
+        instances: instances.map((instance: any) => ({
+          instanceName: instance.name,
+          status: instance.status || 'unknown',
+          owner: instance.owner || 'N/A',
+          lineId: instance.lineId || null
+        })),
+        totalConnected: connected,
+        totalDisconnected: disconnected
+      };
+    } else {
+      throw new Error(response.data?.message || 'Erro ao obter status das instâncias');
+    }
+  } catch (error: any) {
+    console.error('[evolutionApi] Multi instance status error:', error);
+    throw error;
+  }
+}
+
+export async function createInstanceForLine(lineId: string, lineName: string): Promise<{ success: boolean; message: string; instanceName?: string }> {
+  try {
+    // Generate instance name based on line
+    const instanceName = `bitrix_line_${lineId}`;
+    
+    const response = await supabase.functions.invoke('evolution-connector', {
+      body: {
+        action: 'create_instance',
+        instanceName,
+        lineId,
+        lineName
+      }
+    });
+
+    if (response.error) {
+      return {
+        success: false,
+        message: `Erro ao criar instância: ${response.error.message}`
+      };
+    }
+
+    if (response.data?.ok) {
+      return {
+        success: true,
+        message: `Instância "${instanceName}" criada com sucesso para a linha "${lineName}"`,
+        instanceName
+      };
+    } else {
+      return {
+        success: false,
+        message: response.data?.message || 'Erro ao criar instância'
+      };
+    }
+  } catch (error: any) {
+    console.error('[evolutionApi] Create instance error:', error);
+    return {
+      success: false,
+      message: error.message || 'Erro inesperado ao criar instância'
+    };
+  }
+}
+
+export async function getInstanceQRCode(instanceName?: string): Promise<{ success: boolean; qrCode?: string; message: string }> {
+  try {
+    const response = await supabase.functions.invoke('evolution-connector', {
+      body: {
+        action: 'get_qr',
+        instanceName
       }
     });
 
@@ -105,11 +192,12 @@ export async function getInstanceQRCode(): Promise<{ success: boolean; qrCode?: 
   }
 }
 
-export async function startEvolutionSession(): Promise<{ success: boolean; message: string }> {
+export async function startEvolutionSession(instanceName?: string): Promise<{ success: boolean; message: string }> {
   try {
     const response = await supabase.functions.invoke('evolution-connector', {
       body: {
-        action: 'start_session'
+        action: 'start_session',
+        instanceName
       }
     });
 
@@ -136,6 +224,42 @@ export async function startEvolutionSession(): Promise<{ success: boolean; messa
     return {
       success: false,
       message: error.message || 'Erro inesperado ao iniciar sessão'
+    };
+  }
+}
+
+export async function deleteInstance(instanceName: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const response = await supabase.functions.invoke('evolution-connector', {
+      body: {
+        action: 'delete_instance',
+        instanceName
+      }
+    });
+
+    if (response.error) {
+      return {
+        success: false,
+        message: `Erro ao deletar instância: ${response.error.message}`
+      };
+    }
+
+    if (response.data?.ok) {
+      return {
+        success: true,
+        message: `Instância "${instanceName}" deletada com sucesso`
+      };
+    } else {
+      return {
+        success: false,
+        message: response.data?.message || 'Erro ao deletar instância'
+      };
+    }
+  } catch (error: any) {
+    console.error('[evolutionApi] Delete instance error:', error);
+    return {
+      success: false,
+      message: error.message || 'Erro inesperado ao deletar instância'
     };
   }
 }
