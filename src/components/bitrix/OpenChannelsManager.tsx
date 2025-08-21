@@ -89,13 +89,13 @@ const OpenChannelsManager = () => {
   const handleRegisterConnector = async () => {
     try {
       setLoading(true);
-      console.log("[OpenChannelsManager] Registering connector without base64 icon");
+      console.log("[OpenChannelsManager] Registering connector with minimal base64 icon for API compliance");
       
-      // Registrar sem ícone base64 - usando apenas classes CSS do Bitrix
+      // Registrar conector - a edge function usará um ícone base64 mínimo
       await registerConnector({
         connector: CONNECTOR_ID,
         name: CONNECTOR_NAME,
-        icon: "", // Vazio - o Bitrix usa classes CSS internas
+        icon: "", // Será substituído por ícone base64 mínimo na edge function
         chatGroup: "N",
       });
       
@@ -130,7 +130,6 @@ const OpenChannelsManager = () => {
           url: appUrl,
           url_im: appUrl,
           webhook_url: "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-openlines-webhook",
-          // Não enviamos ícone aqui também - deixa o Bitrix usar o sistema interno
         },
       });
 
@@ -439,7 +438,7 @@ const OpenChannelsManager = () => {
         <div className="bg-muted p-4 rounded-lg">
           <h4 className="font-medium mb-2">Ordem de Configuração:</h4>
           <ol className="text-sm space-y-1">
-            <li>1. Registrar o conector REST "EvoWhats" (sem ícone base64)</li>
+            <li>1. Registrar o conector REST "EvoWhats" (usando ícone base64 mínimo para API)</li>
             <li>2. Publicar os dados do conector</li>
             <li>3. Adicionar tile ao Contact Center</li>
             <li>4. Criar linhas Open Channels conforme necessário</li>
@@ -447,8 +446,8 @@ const OpenChannelsManager = () => {
           </ol>
           <div className="text-xs text-muted-foreground mt-2 space-y-1">
             <p>💡 Versão atual: {getCurrentVersion()}</p>
-            <p>🔧 Usando sistema de ícones nativo do Bitrix24</p>
-            <p>📌 O ícone será gerenciado automaticamente pelo sistema</p>
+            <p>🔧 API compatível: ícone base64 mínimo para registro</p>
+            <p>🎨 Visual: Bitrix24 aplicará classes CSS nativas (ui-icon-service-*)</p>
           </div>
         </div>
       </CardContent>

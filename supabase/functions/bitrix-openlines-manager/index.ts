@@ -10,6 +10,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Ícone base64 mínimo (1x1 pixel transparente) para satisfazer a API
+const MINIMAL_ICON_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+
 async function callBitrixAPI(
   portalUrl: string,
   accessToken: string,
@@ -129,23 +132,19 @@ async function handleRegisterConnector(
 ) {
   console.log("[bitrix-openlines-manager] Registering connector:", connector);
   
-  // Usar estratégia compatível com Bitrix24:
-  // 1. Se não há ícone, omitir o campo (deixa o Bitrix usar ícone padrão)
-  // 2. Se há ícone, tentar primeiro sem ele, depois com ele se necessário
+  // A API imconnector.register sempre exige o campo ICON
+  // Usamos um ícone base64 mínimo válido para satisfazer a API
+  // O Bitrix24 depois aplicará suas próprias classes CSS ui-icon
+  const iconToUse = MINIMAL_ICON_BASE64;
   
+  console.log("[bitrix-openlines-manager] Using minimal base64 icon for API compliance");
+
   const params: Record<string, any> = {
     ID: connector,
     NAME: name,
+    ICON: iconToUse,
     CHAT_GROUP: chatGroup,
   };
-
-  // Só incluir ícone se não estiver vazio
-  if (icon && icon.trim()) {
-    console.log("[bitrix-openlines-manager] Including icon in registration");
-    params.ICON = icon;
-  } else {
-    console.log("[bitrix-openlines-manager] Registering without icon (will use Bitrix default)");
-  }
 
   const result = await callBitrixAPI(portalUrl, accessToken, "imconnector.register", params);
   return result;
@@ -158,12 +157,6 @@ async function handlePublishConnectorData(
   data: any
 ) {
   console.log("[bitrix-openlines-manager] Publishing connector data:", connector);
-  
-  // Remover ícone dos dados se estiver presente mas vazio
-  if (data.icon !== undefined && (!data.icon || data.icon.trim() === "")) {
-    delete data.icon;
-    console.log("[bitrix-openlines-manager] Removed empty icon from data");
-  }
   
   const result = await callBitrixAPI(portalUrl, accessToken, "imconnector.connector.data.set", {
     CONNECTOR: connector,
