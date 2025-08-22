@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 
 export interface DBConversation {
@@ -41,6 +40,36 @@ export interface SendMessageParams {
   senderName?: string;
 }
 
+// Helpers to normalize DB rows into our strict union types
+type MessageDirection = "in" | "out";
+type MessageStatus = "sent" | "delivered" | "read" | "failed";
+
+function normalizeDirection(d: any): MessageDirection {
+  return d === "out" ? "out" : "in";
+}
+
+function normalizeStatus(s: any): MessageStatus {
+  if (s === "delivered" || s === "read" || s === "failed") return s;
+  return "sent";
+}
+
+function normalizeDBMessage(row: any): DBMessage {
+  return {
+    id: row.id,
+    conversation_id: row.conversation_id,
+    content: row.content,
+    direction: normalizeDirection(row.direction),
+    message_type: row.message_type ?? undefined,
+    sender_name: row.sender_name ?? undefined,
+    status: normalizeStatus(row.status),
+    evolution_message_id: row.evolution_message_id ?? undefined,
+    bitrix_message_id: row.bitrix_message_id ?? undefined,
+    media_url: row.media_url ?? undefined,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export async function fetchConversations(): Promise<DBConversation[]> {
   const { data, error } = await supabase
     .from('conversations')
@@ -65,7 +94,8 @@ export async function fetchMessages(conversationId: string): Promise<DBMessage[]
     throw new Error(`Erro ao buscar mensagens: ${error.message}`);
   }
 
-  return data || [];
+  const rows = data || [];
+  return rows.map(normalizeDBMessage);
 }
 
 export async function createConversation(params: CreateConversationParams): Promise<DBConversation> {
@@ -148,5 +178,5 @@ export async function sendMessage(params: SendMessageParams): Promise<DBMessage>
     .update({ last_message_at: new Date().toISOString() })
     .eq('id', params.conversationId);
 
-  return data;
+  return normalizeDBMessage(data);
 }
