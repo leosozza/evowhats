@@ -5,49 +5,50 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { getQrForLine, getStatusForLine, startSessionForLine, ensureLineSession } from "@/services/evolutionConnector";
 import { QrCode, Play, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useLineEvolution } from "@/hooks/useLineEvolution";
 
 type Line = { ID: string; NAME: string };
 
 export default function LineQrManager({ lines }: { lines: Line[] }) {
   const { toast } = useToast();
-  const [loadingLine, setLoadingLine] = useState<string | null>(null);
-  const [qrByLine, setQrByLine] = useState<Record<string, string | null>>({});
-  const [statusByLine, setStatusByLine] = useState<Record<string, string>>({});
+  const {
+    loadingLine,
+    qrByLine,
+    statusByLine,
+    startSession,
+    refreshStatus,
+    startPolling,
+  } = useLineEvolution();
+  const [lastActionLine, setLastActionLine] = useState<string | null>(null);
 
   const handleShowQr = async (line: Line) => {
-    setLoadingLine(line.ID);
+    setLastActionLine(line.ID);
     try {
-      // Garante sessão, inicia e busca QR
-      await ensureLineSession({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      await startSessionForLine({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      const qrResp = await getQrForLine({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      const base64 = qrResp?.data?.base64 || qrResp?.data?.qrcode || null;
-      setQrByLine((prev) => ({ ...prev, [line.ID]: base64 }));
-
+      await startSession(line);
+      startPolling(line);
       toast({
-        title: base64 ? "QR atualizado" : "QR não disponível",
-        description: base64 ? `Escaneie o QR para a linha ${line.NAME}.` : "Aguardando geração do QR.",
+        title: "Sessão iniciada",
+        description: `Se a linha ${line.NAME} não estiver conectada, o QR será exibido e atualizado automaticamente.`,
       });
     } catch (e: any) {
       console.error("[LineQrManager] QR error:", e);
       toast({
-        title: "Erro ao obter QR",
-        description: e.message || "Falha ao obter QR da linha.",
+        title: "Erro ao iniciar/obter QR",
+        description: e.message || "Falha ao iniciar sessão Evolution ou obter QR da linha.",
         variant: "destructive",
       });
-    } finally {
-      setLoadingLine(null);
     }
   };
 
   const handleRefreshStatus = async (line: Line) => {
-    setLoadingLine(line.ID);
+    setLastActionLine(line.ID);
     try {
-      const st = await getStatusForLine({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      const state = st?.data?.state || "unknown";
-      setStatusByLine((prev) => ({ ...prev, [line.ID]: String(state) }));
+      await refreshStatus(line);
+      toast({
+        title: "Status atualizado",
+        description: `Status da linha ${line.NAME} foi atualizado.`,
+      });
     } catch (e: any) {
       console.error("[LineQrManager] Status error:", e);
       toast({
@@ -55,8 +56,6 @@ export default function LineQrManager({ lines }: { lines: Line[] }) {
         description: e.message || "Falha ao obter status da linha.",
         variant: "destructive",
       });
-    } finally {
-      setLoadingLine(null);
     }
   };
 
@@ -69,9 +68,9 @@ export default function LineQrManager({ lines }: { lines: Line[] }) {
       </div>
       <div className="space-y-3">
         {lines.map((line) => {
-          const status = (statusByLine[line.ID] || "").toLowerCase();
-          const connected = status.includes("connected") || status.includes("open");
-          const pending = status.includes("qr") || status.includes("pair") || status === "" || status === "unknown";
+          const stateLower = (statusByLine[line.ID] || "").toLowerCase();
+          const connected = stateLower.includes("connected") || stateLower.includes("open");
+          const pending = stateLower.includes("qr") || stateLower.includes("pair") || stateLower === "" || stateLower === "unknown" || stateLower.includes("connecting");
 
           return (
             <Card key={line.ID} className="p-3">
@@ -91,7 +90,7 @@ export default function LineQrManager({ lines }: { lines: Line[] }) {
                         Aguardando Conexão
                       </Badge>
                     ) : (
-                      <Badge variant="outline">Status: {status || "desconhecido"}</Badge>
+                      <Badge variant="outline">Status: {stateLower || "desconhecido"}</Badge>
                     )}
                   </div>
                 </div>
@@ -138,6 +137,11 @@ export default function LineQrManager({ lines }: { lines: Line[] }) {
                   <div className="text-xs text-muted-foreground mt-2">
                     Escaneie o QR no WhatsApp para conectar a linha.
                   </div>
+                  {lastActionLine === line.ID && (
+                    <div className="text-[11px] text-muted-foreground mt-1">
+                      O QR é atualizado automaticamente a cada poucos segundos até conectar.
+                    </div>
+                  )}
                 </div>
               )}
             </Card>
