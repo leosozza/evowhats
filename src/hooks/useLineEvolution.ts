@@ -1,7 +1,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ensureLineSession, getQrForLine, getStatusForLine, startSessionForLine } from "@/services/evolutionConnector";
-import { updateSessionStatus } from "@/services/evolutionInstanceManager";
+import { supabase } from "@/integrations/supabase/client";
 
 export type Line = { ID: string; NAME: string };
 
@@ -41,77 +40,178 @@ export function useLineEvolution(): UseLineEvolutionApi {
   const [qrByLine, setQrByLine] = useState<Record<string, string | null>>({});
   const timersRef = useRef<Map<string, number>>(new Map());
 
-  const persistStatus = useCallback(async (lineId: string, stateRaw: string, qrBase64?: string | null) => {
-    const connected = isConnected(stateRaw);
-    const pending = isPending(stateRaw);
+  const getOrCreateSession = useCallback(async (line: Line) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Usuário não autenticado");
 
-    const statusColumn = connected ? "CONNECTED" : pending ? "PENDING_QR" : String(stateRaw || "UNKNOWN").toUpperCase();
-    await updateSessionStatus(lineId, statusColumn, qrBase64 || undefined);
+    // Verificar se já existe sessão
+    let { data: session } = await supabase
+      .from('wa_sessions')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('bitrix_line_id', line.ID)
+      .maybeSingle();
+
+    if (!session) {
+      // Criar nova sessão com nome de instância determinístico
+      const instanceName = `evo_line_${line.ID}`;
+      
+      const { data: newSession, error } = await supabase
+        .from('wa_sessions')
+        .insert({
+          user_id: user.id,
+          bitrix_line_id: line.ID,
+          bitrix_line_name: line.NAME,
+          evo_instance_id: instanceName,
+          status: 'PENDING_QR'
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      session = newSession;
+    }
+
+    return session;
   }, []);
 
-  const fetchQrIfNeeded = useCallback(async (line: Line, currentState: string) => {
-    if (!isPending(currentState)) {
-      // Clear local QR if not pending
-      setQrByLine(prev => {
-        const next = { ...prev };
-        next[line.ID] = null;
-        return next;
-      });
-      return;
+  const updateSessionInDB = useCallback(async (lineId: string, status: string, qrCode?: string | null) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const updateData: any = {
+      status,
+      last_sync_at: new Date().toISOString()
+    };
+
+    if (qrCode !== undefined) {
+      updateData.qr_code = qrCode;
     }
 
-    const qrResp = await getQrForLine({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-    const base64 = qrResp?.data?.base64 || qrResp?.data?.qrcode || null;
-
-    setQrByLine(prev => ({ ...prev, [line.ID]: base64 }));
-    await persistStatus(line.ID, currentState, base64);
-  }, [persistStatus]);
-
-  const refreshStatus = useCallback(async (line: Line) => {
-    setLoadingLine(line.ID);
-    try {
-      const st = await getStatusForLine({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      const stateRaw = normalizeState(st?.data?.state || st?.data?.status || "unknown");
-
-      setStatusByLine(prev => ({ ...prev, [line.ID]: stateRaw }));
-
-      if (isConnected(stateRaw)) {
-        // Conectado: limpar QR e persistir status CONNECTED
-        setQrByLine(prev => ({ ...prev, [line.ID]: null }));
-        await persistStatus(line.ID, stateRaw, null);
-      } else {
-        // Pendente/desconectado: tentar obter QR
-        await fetchQrIfNeeded(line, stateRaw);
-      }
-    } finally {
-      setLoadingLine(null);
+    if (status === 'CONNECTED') {
+      updateData.connected_at = new Date().toISOString();
     }
-  }, [fetchQrIfNeeded, persistStatus]);
+
+    await supabase
+      .from('wa_sessions')
+      .update(updateData)
+      .eq('user_id', user.id)
+      .eq('bitrix_line_id', lineId);
+  }, []);
 
   const startSession = useCallback(async (line: Line) => {
     setLoadingLine(line.ID);
     try {
-      await ensureLineSession({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      await startSessionForLine({ bitrix_line_id: line.ID, bitrix_line_name: line.NAME });
-      // Após iniciar, já força um refresh que também traz o QR quando necessário
+      // 1. Garantir que existe sessão no DB
+      const session = await getOrCreateSession(line);
+      
+      // 2. Chamar Evolution API para iniciar/conectar instância
+      const { data: createResult, error: createError } = await supabase.functions.invoke("evolution-connector", {
+        body: { 
+          action: "ensure_line_session", 
+          bitrix_line_id: line.ID, 
+          bitrix_line_name: line.NAME 
+        },
+      });
+
+      if (createError) throw createError;
+      if (createResult?.error) throw new Error(createResult.error);
+
+      // 3. Iniciar sessão
+      const { data: startResult, error: startError } = await supabase.functions.invoke("evolution-connector", {
+        body: { 
+          action: "start_session_for_line", 
+          bitrix_line_id: line.ID, 
+          bitrix_line_name: line.NAME 
+        },
+      });
+
+      if (startError) throw startError;
+      if (startResult?.error) throw new Error(startResult.error);
+
+      // 4. Buscar status inicial
       await refreshStatus(line);
+      
     } finally {
       setLoadingLine(null);
     }
-  }, [refreshStatus]);
+  }, [getOrCreateSession]);
+
+  const refreshStatus = useCallback(async (line: Line) => {
+    try {
+      // Buscar status da Evolution API
+      const { data: statusResult, error: statusError } = await supabase.functions.invoke("evolution-connector", {
+        body: { 
+          action: "get_status_for_line", 
+          bitrix_line_id: line.ID, 
+          bitrix_line_name: line.NAME 
+        },
+      });
+
+      if (statusError) throw statusError;
+      if (statusResult?.error) throw new Error(statusResult.error);
+
+      const stateRaw = normalizeState(statusResult?.data?.state || statusResult?.data?.status || "unknown");
+      setStatusByLine(prev => ({ ...prev, [line.ID]: stateRaw }));
+
+      if (isConnected(stateRaw)) {
+        // Conectado: limpar QR
+        setQrByLine(prev => ({ ...prev, [line.ID]: null }));
+        await updateSessionInDB(line.ID, 'CONNECTED', null);
+      } else if (isPending(stateRaw)) {
+        // Pendente: buscar QR
+        try {
+          const { data: qrResult, error: qrError } = await supabase.functions.invoke("evolution-connector", {
+            body: { 
+              action: "get_qr_for_line", 
+              bitrix_line_id: line.ID, 
+              bitrix_line_name: line.NAME 
+            },
+          });
+
+          if (!qrError && qrResult?.data) {
+            const base64 = qrResult.data.base64 || qrResult.data.qrcode || null;
+            setQrByLine(prev => ({ ...prev, [line.ID]: base64 }));
+            await updateSessionInDB(line.ID, 'PENDING_QR', base64);
+          }
+        } catch (qrErr) {
+          console.warn("[useLineEvolution] QR fetch failed:", qrErr);
+        }
+      } else {
+        // Outro status
+        await updateSessionInDB(line.ID, stateRaw.toUpperCase());
+      }
+
+    } catch (error) {
+      console.error("[useLineEvolution] Status refresh failed:", error);
+      setStatusByLine(prev => ({ ...prev, [line.ID]: "error" }));
+    }
+  }, [updateSessionInDB]);
 
   const startPolling = useCallback((line: Line, intervalMs: number = 5000) => {
     // Evitar múltiplos timers
     if (timersRef.current.has(line.ID)) return;
 
-    // Faz um refresh imediato e inicia o intervalo
-    refreshStatus(line);
-    const id = window.setInterval(() => {
-      refreshStatus(line);
-    }, intervalMs);
+    const poll = async () => {
+      try {
+        await refreshStatus(line);
+        // Se conectado, parar o polling
+        const currentStatus = statusByLine[line.ID] || "";
+        if (isConnected(currentStatus)) {
+          stopPolling(line.ID);
+        }
+      } catch (error) {
+        console.error("[useLineEvolution] Polling error:", error);
+      }
+    };
 
+    // Poll inicial
+    poll();
+    
+    // Configurar intervalo
+    const id = window.setInterval(poll, intervalMs);
     timersRef.current.set(line.ID, id);
-  }, [refreshStatus]);
+  }, [refreshStatus, statusByLine]);
 
   const stopPolling = useCallback((lineId: string) => {
     const id = timersRef.current.get(lineId);
@@ -128,7 +228,6 @@ export function useLineEvolution(): UseLineEvolutionApi {
 
   useEffect(() => {
     return () => {
-      // Cleanup ao desmontar
       stopAll();
     };
   }, [stopAll]);
