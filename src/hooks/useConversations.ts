@@ -1,13 +1,13 @@
 
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchConversations } from "@/services/chatApi";
+import { fetchConversations, DBConversation } from "@/services/chatApi";
 import { supabase } from "@/integrations/supabase/client";
 
 export function useConversations() {
   const queryClient = useQueryClient();
 
-  const query = useQuery({
+  const query = useQuery<DBConversation[]>({
     queryKey: ["conversations"],
     queryFn: fetchConversations,
   });

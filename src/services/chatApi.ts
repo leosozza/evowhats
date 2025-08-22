@@ -1,6 +1,33 @@
 
 import { supabase } from "@/integrations/supabase/client";
 
+export interface DBConversation {
+  id: string;
+  user_id: string;
+  contact_phone: string;
+  contact_name?: string;
+  evolution_instance?: string;
+  bitrix_chat_id?: string;
+  last_message_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DBMessage {
+  id: string;
+  conversation_id: string;
+  content: string;
+  direction: 'in' | 'out';
+  message_type?: string;
+  sender_name?: string;
+  status: 'sent' | 'delivered' | 'read' | 'failed';
+  evolution_message_id?: string;
+  bitrix_message_id?: string;
+  media_url?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CreateConversationParams {
   userId: string;
   contact_phone: string;
@@ -14,7 +41,34 @@ export interface SendMessageParams {
   senderName?: string;
 }
 
-export async function createConversation(params: CreateConversationParams) {
+export async function fetchConversations(): Promise<DBConversation[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .order('last_message_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`Erro ao buscar conversas: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+export async function fetchMessages(conversationId: string): Promise<DBMessage[]> {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('*')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(`Erro ao buscar mensagens: ${error.message}`);
+  }
+
+  return data || [];
+}
+
+export async function createConversation(params: CreateConversationParams): Promise<DBConversation> {
   const { data, error } = await supabase
     .from('conversations')
     .insert({
@@ -34,7 +88,7 @@ export async function createConversation(params: CreateConversationParams) {
   return data;
 }
 
-export async function sendMessage(params: SendMessageParams) {
+export async function sendMessage(params: SendMessageParams): Promise<DBMessage> {
   // Get conversation details to find the evolution instance
   const { data: conversation, error: convError } = await supabase
     .from('conversations')

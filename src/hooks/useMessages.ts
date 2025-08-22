@@ -1,13 +1,13 @@
 
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchMessages } from "@/services/chatApi";
+import { fetchMessages, DBMessage } from "@/services/chatApi";
 import { supabase } from "@/integrations/supabase/client";
 
 export function useMessages(conversationId: string | undefined) {
   const queryClient = useQueryClient();
 
-  const query = useQuery({
+  const query = useQuery<DBMessage[]>({
     queryKey: ["messages", conversationId],
     queryFn: () => {
       if (!conversationId) return Promise.resolve([]);

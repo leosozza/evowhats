@@ -8,9 +8,9 @@ import { useToast } from "@/components/ui/use-toast";
 
 export function useConversationMonitor() {
   const { session } = useSupabaseAuth();
-  const { data: conversations, isLoading: loadingConversations } = useConversations();
+  const { data: conversations = [], isLoading: loadingConversations } = useConversations();
   const [selectedConversationId, setSelectedConversationId] = useState<string | undefined>();
-  const { data: messages, isLoading: loadingMessages } = useMessages(selectedConversationId);
+  const { data: messages = [], isLoading: loadingMessages } = useMessages(selectedConversationId);
   const { toast } = useToast();
 
   // Auto-select first conversation when conversations load
