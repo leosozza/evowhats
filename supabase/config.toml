@@ -15,3 +15,11 @@ verify_jwt = true
 
 [functions.bitrix-openlines-webhook]
 verify_jwt = false
+
+[functions.evolution-connector]
+# Chamado pelo frontend autenticado
+verify_jwt = true
+
+[functions.evolution-webhook]
+# Chamado pela Evolution (externo, sem JWT)
+verify_jwt = false

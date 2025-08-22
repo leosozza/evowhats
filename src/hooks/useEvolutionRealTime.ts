@@ -87,37 +87,47 @@ export function useEvolutionRealTime() {
     }
   }, [queryClient]);
 
-  // Process WebSocket message
-  const processWebSocketMessage = useCallback((instanceName: string, data: any) => {
-    if (data.event === 'MESSAGES_UPSERT' && data.data) {
-      const messages = Array.isArray(data.data) ? data.data : [data.data];
+  // Process custom event from EvolutionInstanceManager
+  useEffect(() => {
+    const handleMessagesUpsert = (event: CustomEvent) => {
+      const { instanceName, payload } = event.detail;
       
-      messages.forEach((msgData: any) => {
-        const message = msgData.message || msgData;
+      if (payload?.data) {
+        const messages = Array.isArray(payload.data) ? payload.data : [payload.data];
         
-        if (message && message.key) {
-          const realTimeMessage: RealTimeMessage = {
-            id: `${instanceName}-${message.key.id}`,
-            instanceName,
-            fromNumber: message.key.remoteJid?.replace('@s.whatsapp.net', '') || '',
-            toNumber: message.key.participant?.replace('@s.whatsapp.net', '') || '',
-            message: message.message?.conversation || 
-                    message.message?.extendedTextMessage?.text ||
-                    '[Mídia]',
-            messageType: message.message?.imageMessage ? 'image' :
-                        message.message?.audioMessage ? 'audio' :
-                        message.message?.videoMessage ? 'video' :
-                        message.message?.documentMessage ? 'document' : 'text',
-            timestamp: new Date(message.messageTimestamp * 1000).toISOString(),
-            messageId: message.key.id,
-            isFromMe: message.key.fromMe || false
-          };
+        messages.forEach((msgData: any) => {
+          const message = msgData.message || msgData;
+          
+          if (message && message.key) {
+            const realTimeMessage: RealTimeMessage = {
+              id: `${instanceName}-${message.key.id}`,
+              instanceName,
+              fromNumber: message.key.remoteJid?.replace('@s.whatsapp.net', '') || '',
+              toNumber: message.key.participant?.replace('@s.whatsapp.net', '') || '',
+              message: message.message?.conversation || 
+                      message.message?.extendedTextMessage?.text ||
+                      '[Mídia]',
+              messageType: message.message?.imageMessage ? 'image' :
+                          message.message?.audioMessage ? 'audio' :
+                          message.message?.videoMessage ? 'video' :
+                          message.message?.documentMessage ? 'document' : 'text',
+              timestamp: new Date(message.messageTimestamp * 1000).toISOString(),
+              messageId: message.key.id,
+              isFromMe: message.key.fromMe || false
+            };
 
-          setMessages(prev => [realTimeMessage, ...prev.slice(0, 99)]); // Keep last 100 messages
-          saveMessage(realTimeMessage);
-        }
-      });
-    }
+            setMessages(prev => [realTimeMessage, ...prev.slice(0, 99)]); // Keep last 100 messages
+            saveMessage(realTimeMessage);
+          }
+        });
+      }
+    };
+
+    window.addEventListener('EVO_MESSAGES_UPSERT', handleMessagesUpsert as EventListener);
+    
+    return () => {
+      window.removeEventListener('EVO_MESSAGES_UPSERT', handleMessagesUpsert as EventListener);
+    };
   }, [saveMessage]);
 
   // Subscribe to instance updates
@@ -154,13 +164,10 @@ export function useEvolutionRealTime() {
     try {
       const response = await supabase.functions.invoke('evolution-connector', {
         body: {
-          action: 'proxy',
-          path: `/message/sendText/${instanceName}`,
-          method: 'POST',
-          payload: {
-            number: toNumber,
-            text: message
-          }
+          action: 'send_text',
+          instanceName,
+          number: toNumber,
+          text: message
         }
       });
 
@@ -177,6 +184,5 @@ export function useEvolutionRealTime() {
     isConnecting,
     getMessagesByInstance,
     sendMessage,
-    processWebSocketMessage // Exposed for use in InstanceManager
   };
 }

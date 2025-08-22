@@ -1,419 +1,131 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-type Action =
-  | "start_session"
-  | "get_status"
-  | "get_qr"
-  | "proxy"
-  | "ensure_line_session"
-  | "start_session_for_line"
-  | "get_status_for_line"
-  | "get_qr_for_line";
+// /supabase/functions/evolution-connector/index.ts
+// Deno Edge Function (Supabase) — Proxy resiliente para Evolution API (v1/v2)
 
-type RequestBody = {
-  action: Action;
-  path?: string;
-  method?: string;
-  payload?: unknown;
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
-  bitrix_line_id?: string;
-  bitrix_line_name?: string;
-};
+const EVOLUTION_BASE_URL = Deno.env.get("EVOLUTION_BASE_URL")!;
+const EVOLUTION_API_KEY  = Deno.env.get("EVOLUTION_API_KEY")!;
 
-const corsHeaders = {
+const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 };
 
-function jsonResponse(body: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(body), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-    ...init,
+function ok(data: any, status = 200) {
+  return new Response(JSON.stringify({ ok: true, data }), { status, headers: { ...cors, "Content-Type": "application/json" } });
+}
+function ko(msg: string, status = 200, details?: any) {
+  return new Response(JSON.stringify({ ok: false, error: msg, details }), { status, headers: { ...cors, "Content-Type": "application/json" } });
+}
+
+async function evoFetch(path: string, method: string, payload?: any) {
+  const url = `${EVOLUTION_BASE_URL.replace(/\/$/, "")}${path}`;
+  const headers: Record<string,string> = { "Content-Type": "application/json" };
+  // Evolution aceita apikey por header "apikey" OU Authorization Bearer — deixe os dois por compat.
+  headers["apikey"] = EVOLUTION_API_KEY;
+  headers["Authorization"] = `Bearer ${EVOLUTION_API_KEY}`;
+
+  console.log(`[evolution-connector] ${method} ${url}`);
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: payload ? JSON.stringify(payload) : undefined,
   });
-}
-
-function joinUrl(base: string, path: string) {
-  const baseTrimmed = base.replace(/\/+$/, "");
-  const pathTrimmed = path.replace(/^\/+/, "");
-  return `${baseTrimmed}/${pathTrimmed}`;
-}
-
-async function tryParseResponse(res: Response) {
-  const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    return await res.json();
-  }
   const text = await res.text();
-  return { raw: text };
-}
-
-// Sanitiza string para nome de instância
-function sanitizeInstanceName(name: string) {
-  return name.replace(/[^a-zA-Z0-9_\-\.]/g, "_").slice(0, 128);
-}
-
-// Deriva o nome da instância para uma LINE específica
-function deriveLineInstanceName(base: string | undefined, userId: string, lineId: string) {
-  const root = base && base.trim().length > 0 ? base : "evo";
-  return sanitizeInstanceName(`${root}__u${userId.slice(0, 8)}__l${lineId}`);
+  let data: any = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  
+  console.log(`[evolution-connector] Response ${res.status}:`, data);
+  
+  if (!res.ok) {
+    return { ok: false, status: res.status, data };
+  }
+  return { ok: true, status: res.status, data };
 }
 
 serve(async (req) => {
-  // CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed" }, { status: 405 });
-  }
-
-  // Supabase client com JWT do usuário
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.error("[evolution-connector] Missing SUPABASE_URL or SUPABASE_ANON_KEY envs");
-    return jsonResponse({ error: "Server misconfiguration" }, { status: 500 });
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: req.headers.get("Authorization") || "" } },
-  });
-
-  let body: RequestBody;
-  try {
-    body = await req.json();
-  } catch (_) {
-    return jsonResponse({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth?.user) {
-    console.warn("[evolution-connector] Unauthorized call");
-    return jsonResponse({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  console.log("[evolution-connector] user:", auth.user.id, "action:", body.action);
-
-  // Carregar config do usuário
-  const { data: config, error: cfgErr } = await supabase
-    .from("user_configurations")
-    .select("*")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-
-  if (cfgErr) {
-    console.error("[evolution-connector] Error loading user_configurations:", cfgErr);
-    return jsonResponse({ error: "Failed to load configuration" }, { status: 500 });
-  }
-
-  const baseUrl = config?.evolution_base_url as string | undefined;
-  const apiKey = config?.evolution_api_key as string | undefined;
-  const globalInstanceName = config?.evolution_instance_name as string | undefined;
-
-  if (!baseUrl || !apiKey) {
-    return jsonResponse(
-      { error: "Evolution API não configurada. Defina URL Base e API Key em Configurações." },
-      { status: 400 }
-    );
-  }
-
-  // Helper para chamar Evolution API
-  async function evoFetch(path: string, init?: RequestInit) {
-    const url = joinUrl(baseUrl, path);
-    const headers = new Headers(init?.headers || {});
-    if (!headers.has("Authorization")) headers.set("Authorization", `Bearer ${apiKey}`);
-    if (!headers.has("apikey")) headers.set("apikey", apiKey);
-    if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    headers.set("Accept", "application/json");
-
-    console.log("[evolution-connector] ->", init?.method || "GET", url);
-    const res = await fetch(url, { ...init, headers });
-    const parsed = await tryParseResponse(res);
-
-    if (!res.ok) {
-      console.error("[evolution-connector] Evolution error:", res.status, parsed);
-      return { ok: false as const, status: res.status, data: parsed, path: url };
-    }
-    return { ok: true as const, status: res.status, data: parsed, path: url };
-  }
-
-  // Helper: tenta múltiplos caminhos e retorna o primeiro OK
-  type Candidate = { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path: string; body?: unknown };
-  async function tryCandidates(candidates: Candidate[]) {
-    let lastResult: Awaited<ReturnType<typeof evoFetch>> | null = null;
-    const tried: string[] = [];
-    for (const c of candidates) {
-      tried.push(`${c.method} ${c.path}`);
-      const init: RequestInit = {
-        method: c.method,
-        body: c.method === "GET" || c.method === "DELETE" ? undefined : JSON.stringify(c.body ?? {}),
-      };
-      const r = await evoFetch(c.path, init);
-      lastResult = r;
-      if (r.ok) {
-        console.log("[evolution-connector] Success on:", c.method, c.path);
-        return { result: r, tried };
-      }
-    }
-    console.warn("[evolution-connector] All candidates failed:", tried);
-    return { result: lastResult!, tried };
-  }
-
-  // Normalizações
-  function normalizeStatus(data: any) {
-    const state =
-      data?.state ??
-      data?.status ??
-      data?.connectionStatus ??
-      data?.instance?.state ??
-      data?.instance?.status ??
-      data?.response?.state ??
-      data?.data?.state ??
-      data?.data?.status ??
-      "unknown";
-
-    const owner =
-      data?.owner ??
-      data?.instance?.owner ??
-      data?.user ??
-      data?.me ??
-      data?.response?.owner ??
-      "N/A";
-
-    return { state, owner };
-  }
-
-  function normalizeQr(data: any) {
-    const qr =
-      data?.base64 ??
-      data?.qrcode ??
-      data?.qrCode ??
-      data?.qr ??
-      data?.image ??
-      data?.data?.base64 ??
-      data?.data?.qrcode ??
-      null;
-
-    return qr;
-  }
-
-  // Helper: garantir/recuperar sessão por linha
-  async function ensureLineSession(lineId: string, lineName?: string) {
-    const { data: existing, error: selErr } = await supabase
-      .from("wa_sessions")
-      .select("*")
-      .eq("user_id", auth.user.id)
-      .eq("bitrix_line_id", lineId)
-      .maybeSingle();
-
-    if (selErr) {
-      console.error("[evolution-connector] wa_sessions select error:", selErr);
-      throw new Error("Falha ao consultar sessão.");
-    }
-
-    const evo_instance_id = deriveLineInstanceName(globalInstanceName, auth.user.id, lineId);
-
-    if (!existing) {
-      const insertPayload = {
-        user_id: auth.user.id,
-        bitrix_line_id: lineId,
-        bitrix_line_name: lineName ?? null,
-        evo_instance_id,
-        status: "PENDING_QR",
-      };
-      const { data: inserted, error: insErr } = await supabase
-        .from("wa_sessions")
-        .insert(insertPayload)
-        .select("*")
-        .maybeSingle();
-
-      if (insErr) {
-        console.error("[evolution-connector] wa_sessions insert error:", insErr);
-        throw new Error("Falha ao criar sessão para a linha.");
-      }
-      return inserted!;
-    }
-
-    // Atualiza nome da linha, se mudou
-    if (lineName && existing.bitrix_line_name !== lineName) {
-      await supabase
-        .from("wa_sessions")
-        .update({ bitrix_line_name: lineName })
-        .eq("id", existing.id);
-    }
-
-    // Garante que o evo_instance_id está no formato atual
-    if (existing.evo_instance_id !== evo_instance_id) {
-      const { data: updated } = await supabase
-        .from("wa_sessions")
-        .update({ evo_instance_id })
-        .eq("id", existing.id)
-        .select("*")
-        .maybeSingle();
-      return updated ?? existing;
-    }
-
-    return existing;
-  }
-
-  // Helpers Evolution por instância (linha)
-  async function evoStartInstance(instanceName: string) {
-    const enc = encodeURIComponent(instanceName);
-    const { result, tried } = await tryCandidates([
-      { method: "POST", path: "/instances", body: { instanceName } },
-      { method: "POST", path: "/instances/create", body: { instanceName } },
-      { method: "POST", path: "/instance/create", body: { instanceName } },
-      { method: "POST", path: "/v1/instance/create", body: { instanceName } },
-      { method: "GET", path: `/instance/create/${enc}` },
-      { method: "POST", path: `/session/${enc}/start`, body: { instanceName } },
-    ]);
-    return { result, tried };
-  }
-
-  async function evoGetStatus(instanceName: string) {
-    const enc = encodeURIComponent(instanceName);
-    const { result, tried } = await tryCandidates([
-      { method: "GET", path: `/instances/${enc}/status` },
-      { method: "GET", path: `/instances/${enc}/state` },
-      { method: "GET", path: `/instance/connectionState/${enc}` },
-      { method: "GET", path: `/v1/instance/connectionState/${enc}` },
-      { method: "GET", path: `/session/${enc}/status` },
-      { method: "GET", path: `/whatsapp/${enc}/status` },
-      { method: "GET", path: `/instance/${enc}` },
-    ]);
-    const normalized = normalizeStatus(result.data);
-    return { result: { ...result, data: { ...result.data, ...normalized } }, tried };
-  }
-
-  async function evoGetQr(instanceName: string) {
-    const enc = encodeURIComponent(instanceName);
-    const { result, tried } = await tryCandidates([
-      { method: "GET", path: `/instances/${enc}/qrcode` },
-      { method: "GET", path: `/instances/${enc}/qr` },
-      { method: "GET", path: `/instance/qrbase64/${enc}` },
-      { method: "GET", path: `/qrcode/${enc}` },
-      { method: "GET", path: `/v1/instance/qr/${enc}` },
-    ]);
-    const qr = normalizeQr(result.data);
-    return { result: { ...result, data: { ...result.data, base64: qr, qrcode: qr } }, tried };
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
   try {
-    switch (body.action) {
-      case "ensure_line_session": {
-        if (!body.bitrix_line_id) {
-          return jsonResponse({ error: "bitrix_line_id é obrigatório" }, { status: 400 });
-        }
-        const session = await ensureLineSession(body.bitrix_line_id, body.bitrix_line_name);
-        return jsonResponse({ ok: true, session });
-      }
+    const body = await req.json().catch(()=> ({}));
+    const action = body?.action as string | undefined;
 
-      case "start_session_for_line": {
-        if (!body.bitrix_line_id) {
-          return jsonResponse({ error: "bitrix_line_id é obrigatório" }, { status: 400 });
-        }
-        const session = await ensureLineSession(body.bitrix_line_id, body.bitrix_line_name);
-        const { result, tried } = await evoStartInstance(session.evo_instance_id);
+    console.log(`[evolution-connector] Action: ${action}`, body);
 
-        // Se sucesso, apenas retorna; status ainda pode ser pending_*
-        if (result.ok) {
-          return jsonResponse({ ok: true, tried, result, session });
-        }
-        return jsonResponse({ ok: false, tried, result, session }, { status: 502 });
-      }
-
-      case "get_status_for_line": {
-        if (!body.bitrix_line_id) {
-          return jsonResponse({ error: "bitrix_line_id é obrigatório" }, { status: 400 });
-        }
-        const session = await ensureLineSession(body.bitrix_line_id, body.bitrix_line_name);
-        const { result, tried } = await evoGetStatus(session.evo_instance_id);
-
-        // Atualiza status na tabela
-        const state = (result.data?.state || "unknown").toString().toUpperCase();
-        let newStatus: "PENDING_QR" | "CONNECTED" | "DISCONNECTED" | "ERROR" | null = null;
-        if (state.includes("CONNECTED") || state === "OPEN" || state === "CONNECTED") newStatus = "CONNECTED";
-        else if (state.includes("QR") || state.includes("PAIR") || state === "UNKNOWN") newStatus = "PENDING_QR";
-        else if (state.includes("DISCONNECTED") || state.includes("CLOSED")) newStatus = "DISCONNECTED";
-        else if (!result.ok) newStatus = "ERROR";
-
-        if (newStatus) {
-          await supabase
-            .from("wa_sessions")
-            .update({ status: newStatus, last_sync_at: new Date().toISOString() })
-            .eq("id", session.id);
-        }
-
-        return jsonResponse({ ...result, tried, sessionId: session.id });
-      }
-
-      case "get_qr_for_line": {
-        if (!body.bitrix_line_id) {
-          return jsonResponse({ error: "bitrix_line_id é obrigatório" }, { status: 400 });
-        }
-        const session = await ensureLineSession(body.bitrix_line_id, body.bitrix_line_name);
-        const { result, tried } = await evoGetQr(session.evo_instance_id);
-
-        const qr = (result as any)?.data?.base64 ?? null;
-        if (qr) {
-          await supabase
-            .from("wa_sessions")
-            .update({ qr_code: qr, last_sync_at: new Date().toISOString() })
-            .eq("id", session.id);
-        }
-
-        return jsonResponse({ ...result, tried, sessionId: session.id });
-      }
-
-      default:
-        // Delega para os casos antigos
-        switch (body.action) {
-          case "start_session": {
-            if (!globalInstanceName) {
-              return jsonResponse({ error: "Nome da instância não configurado." }, { status: 400 });
-            }
-            const { result, tried } = await evoStartInstance(globalInstanceName);
-            if (result.ok) return jsonResponse({ ...result });
-            return jsonResponse({ ...result, tried, message: "Falhou ao iniciar a sessão nas rotas testadas." }, { status: 502 });
-          }
-          case "get_status": {
-            if (!globalInstanceName) {
-              return jsonResponse({ error: "Nome da instância não configurado." }, { status: 400 });
-            }
-            const { result, tried } = await evoGetStatus(globalInstanceName);
-            return jsonResponse({ ...result, tried });
-          }
-          case "get_qr": {
-            if (!globalInstanceName) {
-              return jsonResponse({ error: "Nome da instância não configurado." }, { status: 400 });
-            }
-            const { result, tried } = await evoGetQr(globalInstanceName);
-            return jsonResponse({ ...result, tried });
-          }
-          case "proxy": {
-            if (!body.path) {
-              return jsonResponse({ error: "Parâmetro 'path' é obrigatório para proxy." }, { status: 400 });
-            }
-            const method = (body.method || "GET").toUpperCase();
-            if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-              return jsonResponse({ error: "Método não permitido." }, { status: 400 });
-            }
-
-            const r = await evoFetch(body.path, {
-              method,
-              body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body.payload ?? {}),
-            });
-            return jsonResponse(r);
-          }
-          default:
-            return jsonResponse({ error: "Ação inválida." }, { status: 400 });
-        }
+    if (!action || action === "proxy") {
+      // fallback genérico
+      const path   = body?.path as string;
+      const method = (body?.method as string || "GET").toUpperCase();
+      const resp = await evoFetch(path, method, body?.payload);
+      if (resp.ok) return ok(resp.data, resp.status);
+      return ko(`EVOLUTION_ERROR_${resp.status}`, 200, resp.data);
     }
-  } catch (err) {
-    console.error("[evolution-connector] Unexpected error:", err);
-    return jsonResponse({ error: "Internal error" }, { status: 500 });
+
+    // Ações padrão (opcional — usa /action p/ facilitar frontend)
+    if (action === "instance_create") {
+      const name = body?.instanceName;
+      const resp = await evoFetch("/instance/create", "POST", { instanceName: name, qrcode: true });
+      return resp.ok ? ok(resp.data) : ko(`CREATE_FAIL_${resp.status}`, 200, resp.data);
+    }
+
+    if (action === "instance_connect") {
+      const name = body?.instanceName;
+      const resp = await evoFetch(`/instance/connect/${encodeURIComponent(name)}`, "GET");
+      return resp.ok ? ok(resp.data) : ko(`CONNECT_FAIL_${resp.status}`, 200, resp.data);
+    }
+
+    if (action === "instance_fetch") {
+      const name = body?.instanceName;
+      const path = name ? `/instance/fetchInstances?instanceName=${encodeURIComponent(name)}` : "/instance/fetchInstances";
+      const resp = await evoFetch(path, "GET");
+      return resp.ok ? ok(resp.data) : ko(`FETCH_FAIL_${resp.status}`, 200, resp.data);
+    }
+
+    if (action === "instance_qr") {
+      const name = body?.instanceName;
+      const resp = await evoFetch(`/instance/qrcode/${encodeURIComponent(name)}`, "GET");
+      return resp.ok ? ok(resp.data) : ko(`QR_FAIL_${resp.status}`, 200, resp.data); // v2 pode retornar 404 — o front deve depender do WS QRCODE_UPDATED
+    }
+
+    if (action === "send_text") {
+      const name = body?.instanceName;
+      const number = body?.number;
+      const text   = body?.text;
+      const resp = await evoFetch(`/message/sendText/${encodeURIComponent(name)}`, "POST", { number, text });
+      return resp.ok ? ok(resp.data) : ko(`SEND_FAIL_${resp.status}`, 200, resp.data);
+    }
+
+    // Manter compatibilidade com ações antigas para não quebrar funcionalidade existente
+    if (action === "ensure_line_session" || action === "start_session_for_line" || 
+        action === "get_status_for_line" || action === "get_qr_for_line") {
+      // Delegar para a implementação existente se necessário
+      const lineId = body?.bitrix_line_id;
+      if (!lineId) return ko("bitrix_line_id é obrigatório");
+      
+      const instanceName = `evo_line_${lineId}`;
+      
+      if (action === "ensure_line_session" || action === "start_session_for_line") {
+        const resp = await evoFetch("/instance/create", "POST", { instanceName, qrcode: true });
+        return resp.ok ? ok({ ...resp.data, instanceName }) : ko(`CREATE_FAIL_${resp.status}`, 200, resp.data);
+      }
+      
+      if (action === "get_status_for_line") {
+        const resp = await evoFetch(`/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`, "GET");
+        return resp.ok ? ok(resp.data) : ko(`STATUS_FAIL_${resp.status}`, 200, resp.data);
+      }
+      
+      if (action === "get_qr_for_line") {
+        const resp = await evoFetch(`/instance/qrcode/${encodeURIComponent(instanceName)}`, "GET");
+        return resp.ok ? ok(resp.data) : ko(`QR_FAIL_${resp.status}`, 200, resp.data);
+      }
+    }
+
+    return ko("UNKNOWN_ACTION");
+  } catch (e: any) {
+    console.error("[evolution-connector] Error:", e);
+    return ko(e?.message || "Internal error", 200);
   }
 });
