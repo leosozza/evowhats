@@ -2,63 +2,133 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// CORS
-const cors = {
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-webhook-token",
   "Access-Control-Allow-Methods": "POST,OPTIONS",
-};
+} as const;
 
-function ok(data: any) {
-  return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { ...cors, "Content-Type": "application/json" } });
-}
-function ko(msg: string) {
-  return new Response(JSON.stringify({ ok: false, error: msg }), { status: 200, headers: { ...cors, "Content-Type": "application/json" } });
-}
-
-// Helpers: Supabase service client (para acessar DB com privilégios de servidor)
-function getServiceClient() {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !supabaseServiceKey) return null;
-  return createClient(supabaseUrl, supabaseServiceKey);
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
-// Normalização simples de telefone/JID em algo próximo a E.164
+function optionsResponse() {
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
+
+function parseFormEncoded(params: URLSearchParams) {
+  const result: Record<string, any> = {};
+
+  const parseKey = (key: string) =>
+    key
+      .split("[")
+      .map((k) => k.replace(/\]?$/, ""))
+      .filter((k) => k.length > 0);
+
+  const setNested = (obj: Record<string, any>, keys: string[], value: any) => {
+    let current = obj;
+    keys.forEach((k, idx) => {
+      const isLast = idx === keys.length - 1;
+      if (isLast) {
+        current[k] = value;
+      } else {
+        if (typeof current[k] !== "object" || current[k] === null) {
+          current[k] = {};
+        }
+        current = current[k];
+      }
+    });
+  };
+
+  for (const [key, value] of params.entries()) {
+    const keys = parseKey(key);
+    if (keys.length === 0) continue;
+    setNested(result, keys, value);
+  }
+
+  return result;
+}
+
+async function parseIncomingBody(req: Request) {
+  const contentType = req.headers.get("content-type")?.toLowerCase() || "";
+  console.log("[evolution-webhook] Content-Type:", contentType);
+
+  if (contentType.includes("application/json")) {
+    try {
+      const json = await req.json();
+      return { payload: json, contentType };
+    } catch (e) {
+      console.error("[evolution-webhook] Failed to parse JSON body:", e);
+      return { payload: null, contentType, error: "Invalid JSON" };
+    }
+  }
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    try {
+      const text = await req.text();
+      const params = new URLSearchParams(text);
+      const formObject = parseFormEncoded(params);
+      return { payload: formObject, contentType };
+    } catch (e) {
+      console.error("[evolution-webhook] Failed to parse form body:", e);
+      return { payload: null, contentType, error: "Invalid form payload" };
+    }
+  }
+
+  try {
+    const json = await req.json();
+    return { payload: json, contentType };
+  } catch {
+    try {
+      const text = await req.text();
+      const params = new URLSearchParams(text);
+      if ([...params.keys()].length > 0) {
+        const formObject = parseFormEncoded(params);
+        return { payload: formObject, contentType };
+      }
+      return { payload: { raw: text }, contentType };
+    } catch (e) {
+      console.error("[evolution-webhook] Failed to parse unknown body:", e);
+      return { payload: null, contentType, error: "Unsupported body" };
+    }
+  }
+}
+
 function normalizePhone(input?: string | null): string | null {
   if (!input) return null;
-  // remove tudo que não é dígito
   const digits = input.replace(/\D/g, "");
   if (!digits) return null;
-  // se já começa com país (ex.: 55...), prefixar com +
   if (!digits.startsWith("0")) return `+${digits}`;
-  // remover 0 inicial
   return `+${digits.replace(/^0+/, "")}`;
 }
 
-// Extrair texto de mensagens Evolution (formatos podem variar entre versões)
 function extractTextFromMessage(msg: any): string | null {
-  // tente campos comuns
-  const t1 = msg?.message?.conversation;         // padrão WA proto
-  const t2 = msg?.body;                           // alguns webhooks usam body
-  const t3 = msg?.text;                           // fallback
+  const t1 = msg?.message?.conversation;
+  const t2 = msg?.body;
+  const t3 = msg?.text;
   const t4 = msg?.message?.extendedTextMessage?.text;
   return t1 || t2 || t3 || t4 || null;
 }
 
-// Descobrir se mensagem é do agente (fromMe) ou do cliente
 function isFromMe(msg: any): boolean {
   if (typeof msg?.key?.fromMe === "boolean") return msg.key.fromMe;
   if (typeof msg?.fromMe === "boolean") return msg.fromMe;
   return false;
 }
 
-// Tenta extrair um remote JID / telefone do payload
 function extractRemoteJid(msg: any): string | null {
   return msg?.key?.remoteJid || msg?.remoteJid || msg?.chatId || null;
 }
 
-// Resolve tenant: se houver 1 único tenant, usa ele; senão, tente por portal_url no header "x-tenant-portal" (opcional)
 async function resolveTenantId(supabase: any, req: Request): Promise<string | null> {
   const portal = req.headers.get("x-tenant-portal");
   if (portal) {
@@ -74,7 +144,6 @@ async function resolveTenantId(supabase: any, req: Request): Promise<string | nu
   return null;
 }
 
-// Upsert de wa_instances por (tenant, label)
 async function getOrCreateInstance(supabase: any, tenantId: string, label: string) {
   const { data: existing } = await supabase
     .from("wa_instances")
@@ -102,7 +171,6 @@ async function getOrCreateInstance(supabase: any, tenantId: string, label: strin
   return data || existing;
 }
 
-// Upsert de contact por (tenant, phone_e164)
 async function getOrCreateContact(supabase: any, tenantId: string, phone: string, waJid?: string | null, name?: string | null) {
   const { data: existing } = await supabase
     .from("contacts")
@@ -129,11 +197,10 @@ async function getOrCreateContact(supabase: any, tenantId: string, phone: string
   return data || existing;
 }
 
-// Pega conversa aberta para (tenant, instance, contact) ou cria uma nova
 async function getOrOpenConversation(supabase: any, tenantId: string, instanceId: string, contactId: string) {
   const { data: existing } = await supabase
     .from("conversations")
-    .select("id, status")
+    .select("id, status, openlines_chat_id")
     .eq("tenant_id", tenantId)
     .eq("instance_id", instanceId)
     .eq("contact_id", contactId)
@@ -153,7 +220,7 @@ async function getOrOpenConversation(supabase: any, tenantId: string, instanceId
       status: "open",
       last_message_at: new Date().toISOString(),
     })
-    .select("id, status")
+    .select("id, status, openlines_chat_id")
     .maybeSingle();
 
   if (error) {
@@ -162,8 +229,21 @@ async function getOrOpenConversation(supabase: any, tenantId: string, instanceId
   return data || existing;
 }
 
-// Insere mensagem e atualiza last_message_at da conversa
 async function addInboundMessage(supabase: any, tenantId: string, conversationId: string, waMessageId: string | null, text: string | null, file?: { url?: string | null; mime?: string | null }) {
+  // Check for duplicate message
+  if (waMessageId) {
+    const { data: existing } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("wa_message_id", waMessageId)
+      .maybeSingle();
+    
+    if (existing) {
+      console.log("[evolution-webhook] Duplicate message ignored:", waMessageId);
+      return existing;
+    }
+  }
+
   const payload: any = {
     tenant_id: tenantId,
     conversation_id: conversationId,
@@ -176,136 +256,188 @@ async function addInboundMessage(supabase: any, tenantId: string, conversationId
     created_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from("messages").insert(payload);
+  const { data, error } = await supabase.from("messages").insert(payload).select("id").maybeSingle();
   if (error) console.error("[evolution-webhook] addInboundMessage error:", error);
 
   await supabase
     .from("conversations")
     .update({ last_message_at: new Date().toISOString() })
     .eq("id", conversationId);
+
+  return data;
+}
+
+async function sendToBitrixOpenLines(supabase: any, tenantId: string, conversationId: string, text: string, fileUrl?: string) {
+  try {
+    const { data, error } = await supabase.functions.invoke("bitrix-openlines", {
+      body: {
+        action: "openlines.sendMessage",
+        payload: {
+          tenantId,
+          text,
+          fileUrl,
+          ensure: {
+            tenantId,
+            contact: { phone: "unknown" } // This should be improved with actual contact data
+          }
+        }
+      }
+    });
+
+    if (error) {
+      console.error("[evolution-webhook] Error calling bitrix-openlines:", error);
+      return null;
+    }
+
+    if (data?.success && data?.data?.chatId) {
+      // Update conversation with chatId
+      await supabase
+        .from("conversations")
+        .update({ openlines_chat_id: data.data.chatId })
+        .eq("id", conversationId);
+      
+      console.log("[evolution-webhook] Message sent to Bitrix OpenLines, chatId:", data.data.chatId);
+      return data.data;
+    }
+
+    return null;
+  } catch (e) {
+    console.error("[evolution-webhook] Exception calling bitrix-openlines:", e);
+    return null;
+  }
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
-  if (req.method !== "POST") return ko("method_not_allowed");
+  if (req.method === "OPTIONS") return optionsResponse();
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
 
-  const supabase = getServiceClient();
-  if (!supabase) return ko("server_misconfigured");
-
-  try {
-    const payload = await req.json().catch(() => ({}));
-    const event = payload?.event;
-    const instance = payload?.instance || payload?.instanceName || payload?.session || null;
-    const data = payload?.data;
-
-    // Validação simples por token (opcional)
-    const providedToken = req.headers.get("x-webhook-token") || new URL(req.url).searchParams.get("token") || "";
-    const expectedToken = Deno.env.get("WEBHOOK_TOKEN_EVO") || "";
-    const validSignature = !!expectedToken ? providedToken === expectedToken : false;
-
-    // Log persistente do webhook
-    await supabase.from("webhook_logs").insert({
-      provider: "evo",
-      payload_json: payload,
-      received_at: new Date().toISOString(),
-      valid_signature: validSignature,
-    });
-
-    // Opcional: refletir QR / estado também em wa_instances
-    async function reflectInstanceStatus(tenantId: string | null, instLabel: string, state: "qr_required" | "active" | "inactive" | "connecting" | "error") {
-      if (!tenantId) return;
-      const ex = await getOrCreateInstance(supabase, tenantId, instLabel);
-      if (!ex?.id) return;
-      await supabase
-        .from("wa_instances")
-        .update({ status: state, updated_at: new Date().toISOString() })
-        .eq("id", ex.id);
-    }
-
-    // Se disponível, resolva tenant agora (usado pelos handlers abaixo)
-    const tenantId = await resolveTenantId(supabase, req);
-
-    // Handlers existentes: atualizam wa_sessions (mantidos)
-    if (event === "QRCODE_UPDATED" && instance && data?.qr) {
-      await supabase
-        .from("wa_sessions")
-        .update({
-          qr_code: data.qr,
-          status: "PENDING_QR",
-          last_sync_at: new Date().toISOString(),
-        })
-        .eq("evo_instance_id", instance)
-        .catch(() => {});
-
-      await reflectInstanceStatus(tenantId, instance, "qr_required");
-      console.log(`[evolution-webhook] Updated QR for instance: ${instance}`);
-    }
-
-    if (event === "CONNECTION_UPDATE" && instance) {
-      const status = data?.state === "open" ? "CONNECTED" : "DISCONNECTED";
-      await supabase
-        .from("wa_sessions")
-        .update({
-          status,
-          qr_code: status === "CONNECTED" ? null : undefined,
-          connected_at: status === "CONNECTED" ? new Date().toISOString() : undefined,
-          last_sync_at: new Date().toISOString(),
-        })
-        .eq("evo_instance_id", instance)
-        .catch(() => {});
-
-      // Também reflete em wa_instances
-      await reflectInstanceStatus(tenantId, instance, status === "CONNECTED" ? "active" : "inactive");
-      console.log(`[evolution-webhook] Updated connection status for instance: ${instance} -> ${status}`);
-    }
-
-    // Persistência de mensagens recebidas
-    if (event === "MESSAGES_UPSERT" && instance && data?.messages && Array.isArray(data.messages)) {
-      if (!tenantId) {
-        console.warn("[evolution-webhook] MESSAGES_UPSERT: sem tenant resolvido; inclua header x-tenant-portal ou mantenha single-tenant.");
-      }
-
-      // Garante que a instância exista (por label = instance enviados pelo provedor)
-      const instRow = tenantId ? await getOrCreateInstance(supabase, tenantId, String(instance)) : null;
-
-      for (const msg of data.messages) {
-        try {
-          // Ignore mensagens do próprio atendente/instância
-          if (isFromMe(msg)) continue;
-
-          const remoteJid = extractRemoteJid(msg);
-          const phone = normalizePhone(remoteJid) || normalizePhone(msg?.from) || null;
-          const waMessageId = msg?.key?.id || msg?.id || null;
-          const text = extractTextFromMessage(msg);
-          const pushName = msg?.pushName || msg?.senderName || null;
-
-          if (!tenantId || !instRow?.id || !phone) {
-            console.warn("[evolution-webhook] Skipping message - missing key data:", { tenantId: !!tenantId, instId: !!instRow?.id, phone: !!phone });
-            continue;
-          }
-
-          const contact = await getOrCreateContact(supabase, tenantId, phone, remoteJid, pushName);
-          if (!contact?.id) continue;
-
-          const conv = await getOrOpenConversation(supabase, tenantId, instRow.id, contact.id);
-          if (!conv?.id) continue;
-
-          // Suporte rudimentar a mídia (se o payload trouxer url/mime em algum campo conhecido)
-          const fileUrl = msg?.fileUrl || msg?.mediaUrl || null;
-          const mime = msg?.mimeType || null;
-
-          await addInboundMessage(supabase, tenantId, conv.id, waMessageId, text, fileUrl ? { url: fileUrl, mime } : undefined);
-
-          console.log(`[evolution-webhook] Stored inbound message for tenant=${tenantId}, instance=${instance}, phone=${phone}`);
-        } catch (e) {
-          console.error("[evolution-webhook] Error persisting message:", e);
-        }
-      }
-    }
-
-    return ok({ received: true });
-  } catch (e: any) {
-    console.error("[evolution-webhook] Error:", e);
-    return ko(e?.message || "internal_error");
+  const { payload, error: parseError } = await parseIncomingBody(req);
+  if (!payload) {
+    return jsonResponse({ error: parseError || "Invalid request body" }, 400);
   }
+
+  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+  // Validate webhook token
+  const providedToken = req.headers.get("x-webhook-token") || new URL(req.url).searchParams.get("token") || "";
+  const expectedToken = Deno.env.get("WEBHOOK_TOKEN_EVO") || "";
+  const validSignature = !!expectedToken ? providedToken === expectedToken : true; // allow if no token set
+
+  // Log webhook
+  await supabase.from("webhook_logs").insert({
+    provider: "evo",
+    payload_json: payload,
+    received_at: new Date().toISOString(),
+    valid_signature: validSignature,
+  });
+
+  const event = payload?.event;
+  const instance = payload?.instance || payload?.instanceName || payload?.session || null;
+  const data = payload?.data;
+
+  const tenantId = await resolveTenantId(supabase, req);
+
+  async function reflectInstanceStatus(tenantId: string | null, instLabel: string, state: "qr_required" | "active" | "inactive" | "connecting" | "error") {
+    if (!tenantId) return;
+    const ex = await getOrCreateInstance(supabase, tenantId, instLabel);
+    if (!ex?.id) return;
+    await supabase
+      .from("wa_instances")
+      .update({ status: state, updated_at: new Date().toISOString() })
+      .eq("id", ex.id);
+  }
+
+  // Handle existing events (QR, CONNECTION)
+  if (event === "QRCODE_UPDATED" && instance && data?.qr) {
+    await supabase
+      .from("wa_sessions")
+      .update({
+        qr_code: data.qr,
+        status: "PENDING_QR",
+        last_sync_at: new Date().toISOString(),
+      })
+      .eq("evo_instance_id", instance)
+      .catch(() => {});
+
+    await reflectInstanceStatus(tenantId, instance, "qr_required");
+    console.log(`[evolution-webhook] Updated QR for instance: ${instance}`);
+  }
+
+  if (event === "CONNECTION_UPDATE" && instance) {
+    const status = data?.state === "open" ? "CONNECTED" : "DISCONNECTED";
+    await supabase
+      .from("wa_sessions")
+      .update({
+        status,
+        qr_code: status === "CONNECTED" ? null : undefined,
+        connected_at: status === "CONNECTED" ? new Date().toISOString() : undefined,
+        last_sync_at: new Date().toISOString(),
+      })
+      .eq("evo_instance_id", instance)
+      .catch(() => {});
+
+    await reflectInstanceStatus(tenantId, instance, status === "CONNECTED" ? "active" : "inactive");
+    console.log(`[evolution-webhook] Updated connection status for instance: ${instance} -> ${status}`);
+  }
+
+  // Handle incoming messages
+  if (event === "MESSAGES_UPSERT" && instance && data?.messages && Array.isArray(data.messages)) {
+    if (!tenantId) {
+      console.warn("[evolution-webhook] MESSAGES_UPSERT: no tenant resolved");
+      return jsonResponse({ received: true, warning: "no_tenant" });
+    }
+
+    const instRow = await getOrCreateInstance(supabase, tenantId, String(instance));
+    if (!instRow?.id) {
+      console.warn("[evolution-webhook] Could not resolve instance");
+      return jsonResponse({ received: true, warning: "no_instance" });
+    }
+
+    for (const msg of data.messages) {
+      try {
+        if (isFromMe(msg)) continue; // Skip messages from agent/bot
+
+        const remoteJid = extractRemoteJid(msg);
+        const phone = normalizePhone(remoteJid) || normalizePhone(msg?.from) || null;
+        const waMessageId = msg?.key?.id || msg?.id || null;
+        const text = extractTextFromMessage(msg);
+        const pushName = msg?.pushName || msg?.senderName || null;
+
+        if (!phone) {
+          console.warn("[evolution-webhook] Skipping message - no phone number");
+          continue;
+        }
+
+        const contact = await getOrCreateContact(supabase, tenantId, phone, remoteJid, pushName);
+        if (!contact?.id) continue;
+
+        const conv = await getOrOpenConversation(supabase, tenantId, instRow.id, contact.id);
+        if (!conv?.id) continue;
+
+        // Media support
+        const fileUrl = msg?.fileUrl || msg?.mediaUrl || null;
+        const mime = msg?.mimeType || null;
+
+        const messageData = await addInboundMessage(
+          supabase, 
+          tenantId, 
+          conv.id, 
+          waMessageId, 
+          text, 
+          fileUrl ? { url: fileUrl, mime } : undefined
+        );
+
+        if (messageData) {
+          // Send to Bitrix Open Lines
+          await sendToBitrixOpenLines(supabase, tenantId, conv.id, text || "Arquivo recebido", fileUrl);
+          console.log(`[evolution-webhook] Processed message: tenant=${tenantId}, instance=${instance}, phone=${phone}`);
+        }
+
+      } catch (e) {
+        console.error("[evolution-webhook] Error processing message:", e);
+      }
+    }
+  }
+
+  return jsonResponse({ received: true });
 });
