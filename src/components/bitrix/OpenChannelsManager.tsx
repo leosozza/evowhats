@@ -28,6 +28,7 @@ import {
 } from "@/services/bitrixOpenChannelsManager";
 import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
 import LineQrManager from "./LineQrManager";
+import BindingsManager from "./BindingsManager";
 
 const OpenChannelsManager = () => {
   const { toast } = useToast();
@@ -437,6 +438,11 @@ const OpenChannelsManager = () => {
           )}
         </div>
 
+        {/* Bindings Manager */}
+        {status?.lines && status.lines.length > 0 && (
+          <BindingsManager lines={status.lines} />
+        )}
+
         {/* QR/Conexão por Linha (Evolution) */}
         {status?.lines && status.lines.length > 0 && (
           <div className="space-y-2">
@@ -459,7 +465,7 @@ const OpenChannelsManager = () => {
             <p>💡 Versão atual: {getCurrentVersion()}</p>
             <p>🎯 Tile: {TILE_HANDLER_URL}</p>
             <p>⚙️ Setup: {CONNECTOR_HANDLER_URL}</p>
-            <p>📡 Webhook: {WEBHOOK_URL}</p>
+            <p>📡 Webhook: https://twqcybbjyhcokcrdfgkk.functions.supabase.co/evolution-webhook</p>
           </div>
         </div>
       </CardContent>
