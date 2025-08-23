@@ -3,52 +3,37 @@ import { supabase } from "@/integrations/supabase/client";
 
 export interface ConversationWithDetails {
   id: string;
-  tenant_id: string;
-  instance_id: string;
-  contact_id: string;
-  openlines_chat_id: string | null;
-  status: 'open' | 'pending' | 'closed';
-  last_message_at: string;
+  user_id: string;
+  contact_phone: string;
+  contact_name: string | null;
+  bitrix_chat_id: string | null;
+  evolution_instance: string | null;
+  last_message_at: string | null;
   created_at: string;
   updated_at: string;
-  contact: {
-    id: string;
-    phone_e164: string;
-    wa_jid: string | null;
-    name: string | null;
-    bitrix_entity_type: string | null;
-    bitrix_id: number | null;
-  };
-  wa_instance: {
-    id: string;
-    label: string;
-    provider: string;
-    status: string;
-    phone_hint: string | null;
-  };
   messages?: MessageWithDetails[];
 }
 
 export interface MessageWithDetails {
   id: string;
-  tenant_id: string;
   conversation_id: string;
-  direction: 'in' | 'out';
-  type: string;
-  text: string | null;
-  file_url: string | null;
-  mime_type: string | null;
-  wa_message_id: string | null;
+  direction: string;
+  message_type: string;
+  content: string;
+  media_url: string | null;
+  evolution_message_id: string | null;
   bitrix_message_id: string | null;
+  sender_name: string | null;
+  status: string | null;
   created_at: string;
 }
 
 export interface InstanceStatus {
-  label: string;
-  status: 'inactive' | 'qr_required' | 'connecting' | 'active' | 'error';
+  instance_name: string;
+  instance_status: 'disconnected' | 'qr_required' | 'connecting' | 'connected' | 'error';
   phone_hint?: string;
   qr_code?: string;
-  last_seen?: string;
+  last_seen_at?: string;
 }
 
 export interface BitrixIntegrationStatus {
@@ -59,16 +44,16 @@ export interface BitrixIntegrationStatus {
 }
 
 /**
- * Get all conversations with contact and instance details
+ * Get all conversations with details
  */
 export async function getConversations(): Promise<ConversationWithDetails[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
   const { data, error } = await supabase
     .from('conversations')
-    .select(`
-      *,
-      contact:contacts(*),
-      wa_instance:wa_instances(*)
-    `)
+    .select('*')
+    .eq('user_id', user.id)
     .order('last_message_at', { ascending: false });
 
   if (error) {
@@ -76,11 +61,7 @@ export async function getConversations(): Promise<ConversationWithDetails[]> {
     throw new Error(`Failed to fetch conversations: ${error.message}`);
   }
 
-  return (data || []).map(conv => ({
-    ...conv,
-    contact: conv.contact,
-    wa_instance: conv.wa_instance,
-  }));
+  return data || [];
 }
 
 /**
@@ -102,17 +83,13 @@ export async function getMessages(conversationId: string): Promise<MessageWithDe
 }
 
 /**
- * Send a message via backend (useful for testing outside Open Lines)
+ * Send a message via backend
  */
 export async function sendMessage(conversationId: string, text: string): Promise<void> {
-  // Get conversation details first
+  // First get the conversation to get the phone and instance
   const { data: conversation, error: convError } = await supabase
     .from('conversations')
-    .select(`
-      *,
-      contact:contacts(*),
-      wa_instance:wa_instances(*)
-    `)
+    .select('*')
     .eq('id', conversationId)
     .single();
 
@@ -124,10 +101,9 @@ export async function sendMessage(conversationId: string, text: string): Promise
   const { data, error } = await supabase.functions.invoke('evolution-connector', {
     body: {
       action: 'send_message',
-      instance: conversation.wa_instance.label,
-      number: conversation.contact.phone_e164,
-      text,
-      config: conversation.wa_instance.config_json || {}
+      instance: conversation.evolution_instance || 'default',
+      number: conversation.contact_phone,
+      text
     }
   });
 
@@ -141,11 +117,11 @@ export async function sendMessage(conversationId: string, text: string): Promise
 
   // Add to our database
   await supabase.from('messages').insert({
-    tenant_id: conversation.tenant_id,
     conversation_id: conversationId,
     direction: 'out',
-    type: 'text',
-    text,
+    message_type: 'text',
+    content: text,
+    status: 'sent',
     created_at: new Date().toISOString(),
   });
 
@@ -156,12 +132,16 @@ export async function sendMessage(conversationId: string, text: string): Promise
 }
 
 /**
- * Get WhatsApp instances status
+ * Get Evolution instances status
  */
 export async function getInstancesStatus(): Promise<InstanceStatus[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
   const { data, error } = await supabase
-    .from('wa_instances')
+    .from('evolution_instances')
     .select('*')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -170,33 +150,26 @@ export async function getInstancesStatus(): Promise<InstanceStatus[]> {
   }
 
   return (data || []).map(instance => ({
-    label: instance.label,
-    status: instance.status as any,
-    phone_hint: instance.phone_hint,
-    last_seen: instance.updated_at,
+    instance_name: instance.instance_name,
+    instance_status: instance.instance_status as any,
+    last_seen_at: instance.last_seen_at,
   }));
 }
 
 /**
- * Create or update a WhatsApp instance
+ * Create or update an Evolution instance
  */
-export async function createInstance(label: string, config: any = {}): Promise<void> {
+export async function createInstance(instanceName: string, config: any = {}): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('User not authenticated');
 
-  // For now, use first tenant (should be improved with proper tenant selection)
-  const { data: tenant } = await supabase.from('tenants').select('id').limit(1).single();
-  if (!tenant) throw new Error('No tenant found');
-
-  const { error } = await supabase.from('wa_instances').upsert({
-    tenant_id: tenant.id,
-    provider: 'evo',
-    label,
-    status: 'connecting',
-    config_json: config,
+  const { error } = await supabase.from('evolution_instances').upsert({
+    user_id: user.id,
+    instance_name: instanceName,
+    instance_status: 'disconnected',
     updated_at: new Date().toISOString(),
   }, {
-    onConflict: 'tenant_id,label'
+    onConflict: 'user_id,instance_name'
   });
 
   if (error) {
@@ -208,7 +181,7 @@ export async function createInstance(label: string, config: any = {}): Promise<v
     await supabase.functions.invoke('evolution-connector', {
       body: {
         action: 'create_instance',
-        instance: label,
+        instance: instanceName,
         config
       }
     });
@@ -227,24 +200,20 @@ export async function getBitrixStatus(): Promise<BitrixIntegrationStatus> {
       return { connected: false, events_bound: false, openlines_configured: false };
     }
 
-    // Check if we have valid tokens
-    const { data: tenant } = await supabase.from('tenants').select('*').limit(1).single();
-    if (!tenant) {
-      return { connected: false, events_bound: false, openlines_configured: false };
-    }
-
-    const { data: tokens } = await supabase
-      .from('bitrix_tokens')
+    // Check if we have valid credentials
+    const { data: credentials } = await supabase
+      .from('bitrix_credentials')
       .select('*')
-      .eq('tenant_id', tenant.id)
+      .eq('user_id', user.id)
+      .eq('is_active', true)
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    const connected = !!tokens?.access_token;
+    const connected = !!credentials?.access_token;
     
     return {
       connected,
-      portal_url: tenant.portal_url,
+      portal_url: credentials?.portal_url,
       events_bound: connected, // Assume events are bound if connected
       openlines_configured: connected, // Assume configured if connected
     };
@@ -258,7 +227,9 @@ export async function getBitrixStatus(): Promise<BitrixIntegrationStatus> {
  * Bind Bitrix events (webhooks)
  */
 export async function bindBitrixEvents(): Promise<void> {
-  const { data, error } = await supabase.functions.invoke('bitrix-events-bind', {});
+  const { data, error } = await supabase.functions.invoke('bitrix-events-bind', {
+    body: {}
+  });
 
   if (error) {
     throw new Error(`Failed to bind events: ${error.message}`);
@@ -272,15 +243,18 @@ export async function bindBitrixEvents(): Promise<void> {
 /**
  * Test Open Lines integration
  */
-export async function testOpenLines(tenantId: string, message: string = "Test message from Evowhats"): Promise<void> {
+export async function testOpenLines(message: string = "Test message from Evowhats"): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('User not authenticated');
+
   const { data, error } = await supabase.functions.invoke('bitrix-openlines', {
     body: {
       action: 'openlines.sendMessage',
       payload: {
-        tenantId,
+        tenantId: user.id,
         text: message,
         ensure: {
-          tenantId,
+          tenantId: user.id,
           contact: { phone: '+5511999999999', name: 'Test Contact' }
         }
       }
