@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback } from 'react';
 import { useSupabaseAuth } from './useSupabaseAuth';
 import { useToast } from '@/components/ui/use-toast';
@@ -50,15 +49,13 @@ export function useEvowhatsSystem() {
         EvowhatsApi.getConversations(),
       ]);
 
-      // Calculate conversation stats
-      const conversationStats = conversations.reduce(
-        (acc, conv) => {
-          acc.total++;
-          acc[conv.status]++;
-          return acc;
-        },
-        { total: 0, open: 0, pending: 0, closed: 0 }
-      );
+      // Calculate conversation stats - simplified since we don't have status field
+      const conversationStats = {
+        total: conversations.length,
+        open: conversations.length, // assume all are open for now
+        pending: 0,
+        closed: 0,
+      };
 
       // Calculate message stats
       const allMessages = conversations.flatMap(conv => conv.messages || []);
@@ -73,7 +70,7 @@ export function useEvowhatsSystem() {
 
       setSystemStatus({
         evolution: {
-          connected: instances.some(inst => inst.status === 'active'),
+          connected: instances.some(inst => inst.instance_status === 'active'),
           instances,
           lastUpdate: new Date().toISOString(),
         },
@@ -145,9 +142,7 @@ export function useEvowhatsSystem() {
     }
 
     try {
-      // Use first tenant for testing (should be improved)
-      const tenantId = 'test-tenant';
-      await EvowhatsApi.testOpenLines(tenantId, 'Teste de integração do Evowhats');
+      await EvowhatsApi.testOpenLines('Teste de integração do Evowhats');
       
       toast({
         title: 'Teste Realizado',

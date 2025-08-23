@@ -30,7 +30,7 @@ export interface MessageWithDetails {
 
 export interface InstanceStatus {
   instance_name: string;
-  instance_status: 'disconnected' | 'qr_required' | 'connecting' | 'connected' | 'error';
+  instance_status: 'disconnected' | 'qr_required' | 'connecting' | 'active' | 'error';
   phone_hint?: string;
   qr_code?: string;
   last_seen_at?: string;

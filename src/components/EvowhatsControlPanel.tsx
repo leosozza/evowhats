@@ -178,13 +178,13 @@ export function EvowhatsControlPanel() {
                 <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
                   <div className="flex items-center space-x-3">
                     <div className={`h-2 w-2 rounded-full ${
-                      instance.status === 'active' ? 'bg-green-500' :
-                      instance.status === 'connecting' ? 'bg-yellow-500' :
-                      instance.status === 'qr_required' ? 'bg-blue-500' :
+                      instance.instance_status === 'active' ? 'bg-green-500' :
+                      instance.instance_status === 'connecting' ? 'bg-yellow-500' :
+                      instance.instance_status === 'qr_required' ? 'bg-blue-500' :
                       'bg-red-500'
                     }`} />
                     <div>
-                      <div className="font-medium">{instance.label}</div>
+                      <div className="font-medium">{instance.instance_name}</div>
                       {instance.phone_hint && (
                         <div className="text-xs text-gray-500">{instance.phone_hint}</div>
                       )}
@@ -192,12 +192,12 @@ export function EvowhatsControlPanel() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <Badge variant={
-                      instance.status === 'active' ? 'default' :
-                      instance.status === 'connecting' ? 'secondary' :
-                      instance.status === 'qr_required' ? 'outline' :
+                      instance.instance_status === 'active' ? 'default' :
+                      instance.instance_status === 'connecting' ? 'secondary' :
+                      instance.instance_status === 'qr_required' ? 'outline' :
                       'destructive'
                     }>
-                      {instance.status}
+                      {instance.instance_status}
                     </Badge>
                     <Button variant="ghost" size="sm">
                       <Settings className="h-4 w-4" />
