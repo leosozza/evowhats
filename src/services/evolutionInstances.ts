@@ -20,6 +20,11 @@ interface InstanceConnection {
   maxReconnectAttempts: number;
 }
 
+interface EvolutionConfig {
+  evolution_base_url?: string | null;
+  evolution_api_key?: string | null;
+}
+
 class EvolutionInstanceManager {
   private instances = new Map<string, EvolutionInstance>();
   private connections = new Map<string, InstanceConnection>();
@@ -90,7 +95,7 @@ class EvolutionInstanceManager {
     return base64;
   }
 
-  private async getConfig() {
+  private async getConfig(): Promise<EvolutionConfig> {
     const { data } = await supabase
       .from("user_configurations")
       .select("evolution_base_url, evolution_api_key")
