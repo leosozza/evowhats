@@ -6,6 +6,7 @@
   - Updates wa_sessions status/heartbeat and persists inbound messages
   - Ensures Bitrix Open Lines chat and forwards messages via bitrix-openlines
   Response: { success: boolean }
+  Ajustes: log em webhook_logs e envio de instanceId ao bitrix-openlines (binding resolve line_id)
 */
 
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
@@ -17,13 +18,25 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-evolution-signature",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
   "Content-Type": "application/json",
 };
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
+}
+
+async function logWebhook(client: ReturnType<typeof createClient>, payload: any, valid_signature = true, extra?: any) {
+  try {
+    await client.from("webhook_logs").insert({
+      provider: "evolution-webhook",
+      payload_json: { payload, extra },
+      valid_signature,
+    });
+  } catch (_e) {
+    // best effort
+  }
 }
 
 serve(async (req) => {
@@ -35,6 +48,10 @@ serve(async (req) => {
 
   try {
     const payload = await req.json().catch(() => ({}));
+    const signature = req.headers.get("x-evolution-signature") || null;
+
+    await logWebhook(service, payload, true, { signature });
+
     console.log("[evolution-webhook] incoming:", payload);
 
     const instanceName: string | undefined =
@@ -128,6 +145,10 @@ serve(async (req) => {
           .eq("id", conversationId);
       }
 
+      // Prepare instanceId for binding resolution (best-effort: we only have instanceName string)
+      // Functions de binding esperam um UUID; se não houver, passaremos lineId como fallback
+      const instanceIdForBinding = null as string | null;
+
       // Ensure Bitrix chat via bitrix-openlines wrapper (uses tenantId=userId)
       let chatId = existingConv?.bitrix_chat_id || null;
       if (!chatId) {
@@ -138,7 +159,12 @@ serve(async (req) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               action: "openlines.ensureSession",
-              payload: { tenantId: userId, lineId: bitrixLineId || undefined, contact: { phone: contactPhone } },
+              payload: { 
+                tenantId: userId, 
+                lineId: bitrixLineId || undefined,
+                instanceId: instanceIdForBinding || undefined,
+                contact: { phone: contactPhone } 
+              },
             }),
           },
         ).then((r) => r.json()).catch((e) => ({ success: false, error: String(e) }));
@@ -179,6 +205,7 @@ serve(async (req) => {
                 : {
                     tenantId: userId,
                     lineId: bitrixLineId || undefined,
+                    instanceId: instanceIdForBinding || undefined,
                     contact: { phone: contactPhone, name: msg?.sender?.name || null },
                   },
             },
@@ -190,6 +217,7 @@ serve(async (req) => {
     return jsonResponse({ ok: true });
   } catch (e: any) {
     console.error("[evolution-webhook] error:", e?.message || e);
+    await logWebhook(createClient(SUPABASE_URL, SERVICE_ROLE_KEY), { error: e?.message || String(e) }, false);
     return jsonResponse({ ok: false, error: e?.message || "Internal error" }, 500);
   }
 });

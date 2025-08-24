@@ -1,6 +1,8 @@
 
 // supabase/functions/bitrix-openlines/index.ts
 // Deno Edge Function — Bitrix Open Channels wrapper (sessions + send message)
+// Ajustes: resolução de line_id via open_channel_bindings (tenantId + instanceId) com fallback para lineId
+// e logging em webhook_logs
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -16,6 +18,7 @@ const cors = {
 };
 
 function ok(data: any, status = 200) {
+  // Mantém contrato existente: { success: true, data }
   return new Response(JSON.stringify({ success: true, data }), { status, headers: { ...cors, "Content-Type": "application/json" } });
 }
 function ko(message: string, status = 400, details?: any) {
@@ -26,12 +29,14 @@ type StartSessionInput = {
   tenantId: string;
   portalUrl?: string;
   lineId?: string;
+  instanceId?: string; // novo: para resolver via open_channel_bindings
   contact: { userId?: number; phone?: string; name?: string };
 };
 type EnsureChatInput = {
   tenantId: string;
   bitrixChatId?: string | null;
   lineId?: string;
+  instanceId?: string; // novo
   contact: { phone?: string; name?: string };
 };
 type SendMessageInput = {
@@ -60,6 +65,20 @@ type TokenRow = {
 
 async function getServiceClient() {
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+}
+
+async function logWebhook(client: ReturnType<typeof createClient>, action: string, payload: any, valid = true) {
+  try {
+    await (await client)
+      .from("webhook_logs")
+      .insert({
+        provider: "bitrix-openlines",
+        payload_json: { action, payload },
+        valid_signature: valid,
+      });
+  } catch (_e) {
+    // ignore logging errors
+  }
 }
 
 async function getTenantTokens(client: ReturnType<typeof createClient>, tenantId: string): Promise<TokenRow> {
@@ -142,7 +161,27 @@ async function callBitrix(method: string, params: Json, portalUrl: string, acces
   return json.result ?? json;
 }
 
-async function olEnsureSession(client: ReturnType<typeof createClient>, tenantId: string, lineId?: string): Promise<{ chatId: string }> {
+// Resolve line_id via open_channel_bindings (tenantId + instanceId) com fallback para lineId passado
+async function resolveLineId(client: ReturnType<typeof createClient>, tenantId?: string, instanceId?: string, fallbackLineId?: string) {
+  if (fallbackLineId && String(fallbackLineId).trim()) return String(fallbackLineId);
+  if (!tenantId || !instanceId) return null;
+
+  const { data, error } = await client
+    .from("open_channel_bindings")
+    .select("line_id")
+    .eq("tenant_id", tenantId)
+    .eq("instance_id", instanceId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[bitrix-openlines] resolveLineId error:", error.message);
+    return null;
+  }
+  return data?.line_id || null;
+}
+
+async function olEnsureSession(client: ReturnType<typeof createClient>, tenantId: string, lineId: string): Promise<{ chatId: string }> {
   const t0 = await getTenantTokens(client, tenantId);
   const t1 = await refreshTokenIfNeeded(client, t0);
 
@@ -170,6 +209,21 @@ async function olCloseSession(client: ReturnType<typeof createClient>, tenantId:
   return { chatId, closed: true };
 }
 
+// Simplificado para não depender do schema local de conversations; garante chat via Open Lines e retorna chatId.
+async function ensureChatForConversation(
+  client: ReturnType<typeof createClient>,
+  input: EnsureChatInput
+): Promise<{ chatId: string }> {
+  if (input.bitrixChatId) return { chatId: String(input.bitrixChatId) };
+
+  const effectiveLineId = await resolveLineId(client, input.tenantId, input.instanceId, input.lineId);
+  if (!effectiveLineId) {
+    throw new Error("Line ID not resolved: provide lineId or create binding for instanceId");
+  }
+  const r = await olEnsureSession(client, input.tenantId, effectiveLineId);
+  return { chatId: r.chatId };
+}
+
 async function olSendMessage(client: ReturnType<typeof createClient>, tenantId: string, chatId: string, text?: string, fileUrl?: string, replyToMid?: number) {
   const t0 = await getTenantTokens(client, tenantId);
   const t1 = await refreshTokenIfNeeded(client, t0);
@@ -195,48 +249,27 @@ async function olSendMessage(client: ReturnType<typeof createClient>, tenantId: 
   throw new Error("Nothing to send");
 }
 
-async function ensureChatForConversation(
-  client: ReturnType<typeof createClient>,
-  input: EnsureChatInput
-): Promise<{ chatId: string }> {
-  if (input.bitrixChatId) return { chatId: String(input.bitrixChatId) };
-
-  const { data: conv, error } = await client
-    .from("conversations")
-    .select("id, openlines_chat_id")
-    .eq("tenant_id", input.tenantId)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw new Error(`DB error: ${error.message}`);
-
-  if (conv?.openlines_chat_id) {
-    return { chatId: String(conv.openlines_chat_id) };
-  }
-
-  const r = await olEnsureSession(client, input.tenantId, input.lineId);
-  if (conv?.id) {
-    await client.from("conversations").update({ openlines_chat_id: r.chatId }).eq("id", conv.id);
-  }
-  return { chatId: r.chatId };
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: cors });
   }
 
+  const service = await getServiceClient();
+
   try {
-    const service = await getServiceClient();
     const { action, payload } = await req.json().catch(() => ({ action: "", payload: {} as any }));
 
     console.log(`[bitrix-openlines] action: ${action}`, payload);
+    await logWebhook(service, action, payload, true);
 
     switch (action) {
       case "openlines.ensureSession": {
         const p = payload as StartSessionInput;
         if (!p?.tenantId) return ko("tenantId is required");
-        const r = await olEnsureSession(service, p.tenantId, p.lineId);
+        // resolve lineId via binding (tenantId + instanceId) com fallback para p.lineId
+        const effectiveLineId = await resolveLineId(service, p.tenantId, p.instanceId, p.lineId);
+        if (!effectiveLineId) return ko("Line ID not resolved: provide lineId or create binding for instanceId");
+        const r = await olEnsureSession(service, p.tenantId, effectiveLineId);
         return ok(r);
       }
       case "openlines.answer": {
@@ -258,6 +291,7 @@ serve(async (req) => {
 
         if (!chatId) {
           if (!p.ensure) return ko("Missing bitrixChatId and ensure{}");
+          // ensure.chat: resolver lineId via binding se necessário
           const r = await ensureChatForConversation(service, p.ensure);
           chatId = r.chatId;
         }
@@ -270,6 +304,7 @@ serve(async (req) => {
     }
   } catch (e: any) {
     console.error("[bitrix-openlines] error:", e?.message || e);
+    await logWebhook(await getServiceClient(), "error", { error: e?.message || String(e) }, false);
     return ko(e?.message || "Internal error", 500);
   }
 });
