@@ -131,7 +131,7 @@ serve(async (req) => {
             contact_phone: contactPhone || "unknown",
             contact_name: msg?.sender?.name || null,
             evolution_instance: instanceName,
-            bitrix_chat_id: null,
+            openlines_chat_id: null, // padronizado
             last_message_at: new Date().toISOString(),
           })
           .select("id")
@@ -146,11 +146,10 @@ serve(async (req) => {
       }
 
       // Prepare instanceId for binding resolution (best-effort: we only have instanceName string)
-      // Functions de binding esperam um UUID; se não houver, passaremos lineId como fallback
       const instanceIdForBinding = null as string | null;
 
       // Ensure Bitrix chat via bitrix-openlines wrapper (uses tenantId=userId)
-      let chatId = existingConv?.bitrix_chat_id || null;
+      let chatId = existingConv?.openlines_chat_id || null;
       if (!chatId) {
         const ensureRes = await fetch(
           `https://${new URL(SUPABASE_URL).host.replace(".supabase.co", "")}.functions.supabase.co/bitrix-openlines`,
@@ -171,7 +170,7 @@ serve(async (req) => {
 
         if (ensureRes?.success && ensureRes?.data?.chatId) {
           chatId = String(ensureRes.data.chatId);
-          await service.from("conversations").update({ bitrix_chat_id: chatId }).eq("id", conversationId);
+          await service.from("conversations").update({ openlines_chat_id: chatId }).eq("id", conversationId);
         }
       }
 
@@ -197,7 +196,7 @@ serve(async (req) => {
             action: "openlines.sendMessage",
             payload: {
               tenantId: userId,
-              bitrixChatId: chatId || null,
+              bitrixChatId: chatId || null, // usa openlines_chat_id
               text: text || (mediaUrl ? mediaUrl : undefined),
               fileUrl: mediaUrl || undefined,
               ensure: chatId
@@ -211,7 +210,16 @@ serve(async (req) => {
             },
           }),
         },
-      ).catch((e) => console.error("[evolution-webhook] OL send error:", e));
+      )
+        .then((r) => r.json())
+        .then(async (sendRes) => {
+          // Se a chamada de envio retornou chatId e ainda não está salvo, persistir
+          const returnedChatId: string | undefined = sendRes?.data?.chatId;
+          if (!chatId && returnedChatId && conversationId) {
+            await service.from("conversations").update({ openlines_chat_id: returnedChatId }).eq("id", conversationId);
+          }
+        })
+        .catch((e) => console.error("[evolution-webhook] OL send error:", e));
     }
 
     return jsonResponse({ ok: true });
