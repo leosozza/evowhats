@@ -19,7 +19,14 @@ async function exchangeToken(portal: string, code: string, redirectUri: string) 
 
   console.log("[bitrix-oauth-callback] Exchanging token at:", `${portal}/oauth/token/`);
 
-  const res = await fetch(`${portal.replace(/\/+$/, "")}/oauth/token/`, {
+  // Para portais cloud, usar oauth.bitrix.info
+  const tokenEndpoint = portal.includes('.bitrix24.') 
+    ? 'https://oauth.bitrix.info/oauth/token/' 
+    : `${portal.replace(/\/+$/, "")}/oauth/token/`;
+
+  console.log("[bitrix-oauth-callback] Token endpoint:", tokenEndpoint);
+
+  const res = await fetch(tokenEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -32,7 +39,12 @@ async function exchangeToken(portal: string, code: string, redirectUri: string) 
   }
   
   const result = await res.json();
-  console.log("[bitrix-oauth-callback] Token response received");
+  console.log("[bitrix-oauth-callback] Token response received, access_token present:", !!result.access_token);
+  
+  if (!result.access_token) {
+    throw new Error("Access token não retornado na resposta");
+  }
+  
   return result;
 }
 
@@ -43,13 +55,15 @@ serve(async (req) => {
   const code = u.searchParams.get("code");
   const domain = u.searchParams.get("domain");
   const error = u.searchParams.get("error");
+  const errorDescription = u.searchParams.get("error_description");
   const state = u.searchParams.get("state") || "";
   
   console.log("[bitrix-oauth-callback] Received params:", { 
     code: !!code, 
     domain, 
     state_present: !!state,
-    error 
+    error,
+    errorDescription
   });
 
   // Use window.location.origin equivalent for the callback URL
@@ -58,13 +72,25 @@ serve(async (req) => {
   const redirectUrl = new URL(frontendUrl);
   
   if (error) {
-    console.error("[bitrix-oauth-callback] OAuth error:", error);
-    redirectUrl.searchParams.set("error", error);
+    console.error("[bitrix-oauth-callback] OAuth error from Bitrix:", error, errorDescription);
+    redirectUrl.searchParams.set("error", errorDescription || error);
     return Response.redirect(redirectUrl.toString(), 302);
   }
 
   if (!code || !domain) {
-    redirectUrl.searchParams.set("error", "Parâmetros inválidos (code/domain)");
+    const missingParams = [];
+    if (!code) missingParams.push("code");
+    if (!domain) missingParams.push("domain");
+    
+    const errorMsg = `Parâmetros obrigatórios ausentes: ${missingParams.join(", ")}`;
+    console.error("[bitrix-oauth-callback]", errorMsg);
+    redirectUrl.searchParams.set("error", errorMsg);
+    return Response.redirect(redirectUrl.toString(), 302);
+  }
+
+  if (!state) {
+    console.error("[bitrix-oauth-callback] State parameter missing - security issue");
+    redirectUrl.searchParams.set("error", "Parâmetro state ausente - problema de segurança");
     return Response.redirect(redirectUrl.toString(), 302);
   }
 
@@ -75,14 +101,16 @@ serve(async (req) => {
   const callbackUri = u.origin + u.pathname; // Usar a URL atual como redirect_uri
 
   try {
+    console.log("[bitrix-oauth-callback] Starting token exchange process");
     const tokenData = await exchangeToken(portal, code, callbackUri);
 
     if (!tokenData?.access_token) {
+      console.error("[bitrix-oauth-callback] Token data invalid:", !!tokenData);
       redirectUrl.searchParams.set("error", "Token não retornado pelo Bitrix");
       return Response.redirect(redirectUrl.toString(), 302);
     }
 
-    console.log("[bitrix-oauth-callback] Token exchange successful, access_token received");
+    console.log("[bitrix-oauth-callback] Token exchange successful, saving to database");
 
     // Salvar tokens na tabela bitrix_credentials
     const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
@@ -96,10 +124,19 @@ serve(async (req) => {
     const installation_id = (tokenData.member_id as string | undefined) ||
                            (tokenData.installation_id as string | undefined) || null;
 
+    // Validar state (deve ser um UUID válido de user_id)
     const userId = state && /^[0-9a-fA-F-]{36}$/.test(state) ? state : null;
     if (!userId) {
-      console.warn("[bitrix-oauth-callback] Missing or invalid state (user_id)");
+      console.error("[bitrix-oauth-callback] Invalid state format:", state?.substring(0, 8));
       redirectUrl.searchParams.set("error", "Estado de autenticação inválido");
+      return Response.redirect(redirectUrl.toString(), 302);
+    }
+
+    // Verificar se o usuário existe
+    const { data: userCheck, error: userError } = await serviceClient.auth.admin.getUserById(userId);
+    if (userError || !userCheck.user) {
+      console.error("[bitrix-oauth-callback] User not found for state:", userId, userError?.message);
+      redirectUrl.searchParams.set("error", "Usuário não encontrado para o state fornecido");
       return Response.redirect(redirectUrl.toString(), 302);
     }
 
@@ -121,7 +158,7 @@ serve(async (req) => {
 
     if (upsertErr) {
       console.error("[bitrix-oauth-callback] Database upsert error:", upsertErr);
-      redirectUrl.searchParams.set("error", "Erro ao salvar credenciais no banco");
+      redirectUrl.searchParams.set("error", `Erro ao salvar credenciais: ${upsertErr.message}`);
       return Response.redirect(redirectUrl.toString(), 302);
     }
 
@@ -133,7 +170,8 @@ serve(async (req) => {
     
   } catch (e) {
     console.error("[bitrix-oauth-callback] Error:", e);
-    redirectUrl.searchParams.set("error", `Erro ao trocar code por token: ${(e as Error).message}`);
+    const errorMsg = `Erro ao trocar code por token: ${(e as Error).message}`;
+    redirectUrl.searchParams.set("error", errorMsg);
     return Response.redirect(redirectUrl.toString(), 302);
   }
 });

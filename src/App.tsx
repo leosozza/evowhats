@@ -29,6 +29,7 @@ function App() {
                 <Route path="/contact-center" element={<ContactCenterLanding />} />
                 <Route path="/connector-setup" element={<ConnectorSetup />} />
                 <Route path="/callback" element={<BitrixCallback />} />
+                <Route path="/bitrix-callback" element={<BitrixCallback />} />
                 <Route path="/bindings" element={<BindingsDashboard />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>

@@ -1,14 +1,14 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { startBitrixOAuth } from "@/services/bitrixIntegration";
-import { Link, CheckCircle, XCircle, Unlink } from "lucide-react";
+import { Link, CheckCircle, XCircle, Unlink, Eye, EyeOff, Loader2 } from "lucide-react";
 import { getBitrixAuthStatus, type BitrixAuthStatus } from "@/services/bitrixAuthStatus";
-import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getPortalFromIframe, buildBitrixAuthUrl, initializeBX24, type PortalInfo } from "@/utils/bitrixPortalDetection";
 
 interface ConnectBitrixButtonProps {
   portalUrl: string;
@@ -18,7 +18,48 @@ interface ConnectBitrixButtonProps {
 const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButtonProps) => {
   const [loading, setLoading] = useState(false);
   const [authStatus, setAuthStatus] = useState<BitrixAuthStatus | null>(null);
+  const [showPortalInput, setShowPortalInput] = useState(true);
+  const [detectedPortal, setDetectedPortal] = useState<PortalInfo | null>(null);
+  const [initializingBX24, setInitializingBX24] = useState(true);
   const { toast } = useToast();
+
+  // Inicializar BX24 e detectar portal
+  useEffect(() => {
+    const initializeAndDetect = async () => {
+      console.log("[ConnectBitrixButton] Initializing BX24 and detecting portal...");
+      setInitializingBX24(true);
+
+      try {
+        // Tentar inicializar BX24 (se estiver no iFrame)
+        const bx24Available = await initializeBX24();
+        console.log("[ConnectBitrixButton] BX24 available:", bx24Available);
+
+        // Tentar detectar portal automaticamente
+        const portal = getPortalFromIframe();
+        if (portal) {
+          console.log("[ConnectBitrixButton] Portal detected:", portal);
+          setDetectedPortal(portal);
+          onPortalUrlChange(portal.url);
+          setShowPortalInput(false);
+          
+          toast({
+            title: "Portal detectado automaticamente",
+            description: `Usando portal: ${portal.url}`,
+          });
+        } else {
+          console.log("[ConnectBitrixButton] No portal detected, showing manual input");
+          setShowPortalInput(true);
+        }
+      } catch (error) {
+        console.error("[ConnectBitrixButton] Error during initialization:", error);
+        setShowPortalInput(true);
+      } finally {
+        setInitializingBX24(false);
+      }
+    };
+
+    initializeAndDetect();
+  }, [onPortalUrlChange, toast]);
 
   const checkAuthStatus = async () => {
     try {
@@ -36,6 +77,57 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
     const interval = setInterval(checkAuthStatus, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Escutar mensagens do popup OAuth
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Verificar origem por segurança
+      if (event.origin !== window.location.origin) {
+        console.warn("[ConnectBitrixButton] Ignoring message from unknown origin:", event.origin);
+        return;
+      }
+
+      console.log("[ConnectBitrixButton] Received message:", event.data);
+      
+      if (event.data?.source === "bitrix-oauth") {
+        if (event.data.ok) {
+          console.log("[ConnectBitrixButton] OAuth success received");
+          
+          toast({
+            title: "Conectado ao Bitrix24!",
+            description: "Integração OAuth configurada com sucesso.",
+          });
+          
+          // Update status after successful OAuth
+          setTimeout(checkAuthStatus, 1000);
+        } else if (event.data.error) {
+          console.error("[ConnectBitrixButton] OAuth error received:", event.data.error);
+          
+          toast({
+            title: "Erro na conexão OAuth",
+            description: event.data.error,
+            variant: "destructive",
+          });
+        }
+        
+        setLoading(false);
+      } else if (event.data === "bitrix_oauth_success") {
+        // Mensagem legacy para compatibilidade
+        console.log("[ConnectBitrixButton] Legacy success message received");
+        
+        toast({
+          title: "Conectado ao Bitrix24!",
+          description: "Integração OAuth configurada com sucesso.",
+        });
+        
+        setTimeout(checkAuthStatus, 1000);
+        setLoading(false);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [toast]);
 
   const handleDisconnect = async () => {
     try {
@@ -68,7 +160,9 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
   };
 
   const handleConnectOAuth = async () => {
-    if (!portalUrl) {
+    const finalPortalUrl = portalUrl.trim();
+    
+    if (!finalPortalUrl) {
       toast({
         title: "URL obrigatória",
         description: "Digite a URL do seu portal Bitrix24 (ex: https://seudominio.bitrix24.com.br)",
@@ -79,7 +173,7 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
 
     // Validate URL format
     try {
-      const url = new URL(portalUrl);
+      const url = new URL(finalPortalUrl);
       if (!url.hostname.includes('bitrix24')) {
         toast({
           title: "URL inválida",
@@ -98,10 +192,10 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
     }
 
     setLoading(true);
-    console.log("[ConnectBitrixButton] Starting OAuth for portal:", portalUrl);
+    console.log("[ConnectBitrixButton] Starting OAuth for portal:", finalPortalUrl);
 
     try {
-      const { auth_url } = await startBitrixOAuth(portalUrl);
+      const { auth_url } = await startBitrixOAuth(finalPortalUrl);
       console.log("[ConnectBitrixButton] OAuth URL generated:", auth_url);
 
       // Open OAuth window
@@ -115,45 +209,11 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
         throw new Error("Pop-up bloqueado. Permita pop-ups para este site.");
       }
 
-      // Listen for success message from popup
-      const handleMessage = (event: MessageEvent) => {
-        console.log("[ConnectBitrixButton] Received message:", event);
-        
-        if (event.data?.source === "bitrix-oauth" && event.data?.ok) {
-          console.log("[ConnectBitrixButton] OAuth success received");
-          popup?.close();
-          window.removeEventListener("message", handleMessage);
-          
-          toast({
-            title: "Conectado ao Bitrix24!",
-            description: "Integração OAuth configurada com sucesso.",
-          });
-          
-          // Update status after successful OAuth
-          setTimeout(checkAuthStatus, 1000);
-          setLoading(false);
-        } else if (event.data === "bitrix_oauth_success") {
-          console.log("[ConnectBitrixButton] Legacy success message received");
-          popup?.close();
-          window.removeEventListener("message", handleMessage);
-          
-          toast({
-            title: "Conectado ao Bitrix24!",
-            description: "Integração OAuth configurada com sucesso.",
-          });
-          
-          setTimeout(checkAuthStatus, 1000);
-          setLoading(false);
-        }
-      };
-
-      window.addEventListener("message", handleMessage);
-
       // Check if popup is closed manually
       const checkClosed = setInterval(() => {
         if (popup?.closed) {
           clearInterval(checkClosed);
-          window.removeEventListener("message", handleMessage);
+          console.log("[ConnectBitrixButton] Popup closed manually");
           setLoading(false);
         }
       }, 1000);
@@ -177,21 +237,69 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
     }
   };
 
+  const togglePortalInput = () => {
+    setShowPortalInput(!showPortalInput);
+  };
+
   // Show connection status
   const isConnected = authStatus?.isConnected && authStatus?.hasValidTokens;
   const hasExpiredToken = authStatus?.isConnected && !authStatus?.hasValidTokens;
 
+  if (initializingBX24) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Detectando portal Bitrix24...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      {/* Portal Detection Info */}
+      {detectedPortal && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-700">
+            <strong>Portal detectado:</strong> {detectedPortal.url}
+            <br />
+            <span className="text-xs">Fonte: {detectedPortal.source === 'iframe' ? 'BX24 iFrame' : 'Referrer'}</span>
+          </p>
+        </div>
+      )}
+
+      {/* Portal URL Input */}
       <div>
-        <Label htmlFor="portal-url">URL do Portal Bitrix24</Label>
-        <Input
-          id="portal-url"
-          placeholder="https://seudominio.bitrix24.com.br"
-          value={portalUrl}
-          onChange={(e) => onPortalUrlChange(e.target.value)}
-          disabled={isConnected}
-        />
+        <div className="flex items-center gap-2 mb-2">
+          <Label htmlFor="portal-url">URL do Portal Bitrix24</Label>
+          {detectedPortal && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={togglePortalInput}
+            >
+              {showPortalInput ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </Button>
+          )}
+        </div>
+        
+        {showPortalInput && (
+          <Input
+            id="portal-url"
+            placeholder="https://seudominio.bitrix24.com.br"
+            value={portalUrl}
+            onChange={(e) => onPortalUrlChange(e.target.value)}
+            disabled={isConnected || loading}
+          />
+        )}
+        
+        {!showPortalInput && detectedPortal && (
+          <div className="px-3 py-2 bg-gray-50 border rounded-md text-sm text-gray-600">
+            {portalUrl}
+          </div>
+        )}
       </div>
 
       {isConnected ? (
@@ -221,7 +329,7 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
             disabled={loading}
             className="gradient-primary"
           >
-            <Link className="h-4 w-4 mr-2" />
+            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link className="h-4 w-4 mr-2" />}
             {loading ? "Reconectando..." : "Reconectar OAuth"}
           </Button>
         </div>
@@ -236,7 +344,7 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
             disabled={loading}
             className="gradient-primary"
           >
-            <Link className="h-4 w-4 mr-2" />
+            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link className="h-4 w-4 mr-2" />}
             {loading ? "Conectando..." : "Conectar via OAuth"}
           </Button>
         </div>
@@ -245,6 +353,23 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
       <p className="text-xs text-muted-foreground">
         Escopos necessários: imopenlines, imconnector, im, placement, crm, user
       </p>
+
+      {/* Debug Info */}
+      {process.env.NODE_ENV === 'development' && (
+        <details className="text-xs text-gray-500">
+          <summary>Debug Info</summary>
+          <pre className="mt-1 p-2 bg-gray-100 rounded text-xs overflow-x-auto">
+            {JSON.stringify({
+              hasWindow: typeof window !== 'undefined',
+              hasBX24: typeof (window as any).BX24 !== 'undefined',
+              referrer: document.referrer,
+              searchParams: Object.fromEntries(new URLSearchParams(window.location.search)),
+              detectedPortal,
+              authStatus
+            }, null, 2)}
+          </pre>
+        </details>
+      )}
     </div>
   );
 };
