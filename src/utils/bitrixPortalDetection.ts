@@ -1,5 +1,17 @@
 
-declare const BX24: any;
+// Define proper BX24 interface
+interface BX24Interface {
+  getDomain?: () => string;
+  getSite?: () => string;
+  getLang?: () => { DOMAIN?: string };
+  init?: (callback: () => void) => void;
+}
+
+declare global {
+  interface Window {
+    BX24?: BX24Interface;
+  }
+}
 
 export interface PortalInfo {
   url: string;
@@ -10,8 +22,10 @@ export interface PortalInfo {
 export function getPortalFromIframe(): PortalInfo | null {
   try {
     // Tentar detectar via BX24 (quando app está no iFrame do Bitrix)
-    if (typeof BX24 !== "undefined") {
+    if (typeof window !== 'undefined' && window.BX24) {
       console.log("[PortalDetection] BX24 available, trying to get domain...");
+      
+      const BX24 = window.BX24;
       
       // Diferentes métodos dependendo da versão do BX24
       const domain = BX24.getDomain?.() || BX24.getSite?.() || BX24.getLang?.()?.DOMAIN;
@@ -107,14 +121,17 @@ export function buildBitrixAuthUrl({
 export function initializeBX24(): Promise<boolean> {
   return new Promise((resolve) => {
     try {
-      if (typeof BX24 !== "undefined") {
-        if (BX24.init) {
+      if (typeof window !== 'undefined' && window.BX24) {
+        const BX24 = window.BX24;
+        
+        if (BX24.init && typeof BX24.init === 'function') {
           BX24.init(() => {
             console.log("[BX24] Initialized successfully");
             resolve(true);
           });
         } else {
           // BX24 já está disponível
+          console.log("[BX24] Already available");
           resolve(true);
         }
       } else {
@@ -122,9 +139,11 @@ export function initializeBX24(): Promise<boolean> {
         let attempts = 0;
         const checkBX24 = () => {
           attempts++;
-          if (typeof BX24 !== "undefined") {
+          if (typeof window !== 'undefined' && window.BX24) {
             console.log("[BX24] Found after", attempts, "attempts");
-            if (BX24.init) {
+            const BX24 = window.BX24;
+            
+            if (BX24.init && typeof BX24.init === 'function') {
               BX24.init(() => resolve(true));
             } else {
               resolve(true);
