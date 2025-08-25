@@ -1,5 +1,5 @@
 
-// Deno Edge Function: troca "code" por tokens e grava em bitrix_tokens (Service Role)
+// Deno Edge Function: troca "code" por tokens e grava em bitrix_credentials (Service Role)
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
