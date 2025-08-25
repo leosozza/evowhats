@@ -1,20 +1,20 @@
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { BrowserRouter, Routes, Route } from "react-router-dom"
 
 import { Toaster } from "@/components/ui/toaster"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
-import { Index } from "@/pages"
-import { ContactCenterLanding } from "@/pages/contact-center"
-import { ConnectorSetup } from "@/pages/connector-setup"
-import { BitrixCallback } from "@/pages/callback"
-import { NotFound } from "@/pages/not-found"
+import { Index } from "@/pages/Index"
+import { ContactCenterLanding } from "@/pages/ContactCenterLanding"
+import { ConnectorSetup } from "@/pages/ConnectorSetup"
+import { BitrixCallback } from "@/pages/BitrixCallback"
+import NotFound from "@/pages/NotFound"
 
-import { Header } from "@/components/Header"
+import Header from "@/components/Header"
+import BindingsDashboard from "@/pages/BindingsDashboard"
 
 const queryClient = new QueryClient()
-
-import BindingsDashboard from "@/pages/BindingsDashboard";
 
 function App() {
   return (
