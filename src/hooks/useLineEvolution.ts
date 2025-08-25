@@ -16,6 +16,7 @@ type UseLineEvolutionApi = {
   startPolling: (line: Line, intervalMs?: number) => void;
   stopPolling: (lineId: string) => void;
   stopAll: () => void;
+  testSend: (lineId: string, to: string) => Promise<any>;
 } & UseLineEvolutionState;
 
 function normalizeState(s?: string): string {
@@ -106,7 +107,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
       const session = await getOrCreateSession(line);
       
       // 2. Chamar Evolution API para iniciar/conectar instância
-      const { data: createResult, error: createError } = await supabase.functions.invoke("evolution-connector", {
+      const { data: createResult, error: createError } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { 
           action: "ensure_line_session", 
           bitrix_line_id: line.ID, 
@@ -118,11 +119,10 @@ export function useLineEvolution(): UseLineEvolutionApi {
       if (createResult?.error) throw new Error(createResult.error);
 
       // 3. Iniciar sessão
-      const { data: startResult, error: startError } = await supabase.functions.invoke("evolution-connector", {
+      const { data: startResult, error: startError } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { 
           action: "start_session_for_line", 
-          bitrix_line_id: line.ID, 
-          bitrix_line_name: line.NAME 
+          lineId: line.ID
         },
       });
 
@@ -140,11 +140,10 @@ export function useLineEvolution(): UseLineEvolutionApi {
   const refreshStatus = useCallback(async (line: Line) => {
     try {
       // Buscar status da Evolution API
-      const { data: statusResult, error: statusError } = await supabase.functions.invoke("evolution-connector", {
+      const { data: statusResult, error: statusError } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { 
           action: "get_status_for_line", 
-          bitrix_line_id: line.ID, 
-          bitrix_line_name: line.NAME 
+          lineId: line.ID
         },
       });
 
@@ -161,11 +160,10 @@ export function useLineEvolution(): UseLineEvolutionApi {
       } else if (isPending(stateRaw)) {
         // Pendente: buscar QR
         try {
-          const { data: qrResult, error: qrError } = await supabase.functions.invoke("evolution-connector", {
+          const { data: qrResult, error: qrError } = await supabase.functions.invoke("evolution-connector-v2", {
             body: { 
               action: "get_qr_for_line", 
-              bitrix_line_id: line.ID, 
-              bitrix_line_name: line.NAME 
+              lineId: line.ID
             },
           });
 
@@ -187,6 +185,12 @@ export function useLineEvolution(): UseLineEvolutionApi {
       setStatusByLine(prev => ({ ...prev, [line.ID]: "error" }));
     }
   }, [updateSessionInDB]);
+
+  const testSend = useCallback(async (lineId: string, to: string) => {
+    return supabase.functions.invoke("evolution-connector-v2", {
+      body: { action: "test_send", lineId, to, text: "Ping de teste" },
+    });
+  }, []);
 
   const startPolling = useCallback((line: Line, intervalMs: number = 5000) => {
     // Evitar múltiplos timers
@@ -241,5 +245,6 @@ export function useLineEvolution(): UseLineEvolutionApi {
     startPolling,
     stopPolling,
     stopAll,
+    testSend,
   };
 }

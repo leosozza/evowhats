@@ -1,45 +1,43 @@
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { Toaster } from "@/components/ui/toaster";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
+import { useBitrixTokenRefresh } from "@/hooks/useBitrixTokenRefresh";
+import Index from "@/pages/Index";
+import ContactCenterLanding from "@/pages/ContactCenterLanding";
+import ConnectorSetup from "@/pages/ConnectorSetup";
+import BitrixCallback from "@/pages/BitrixCallback";
+import BindingsDashboard from "@/pages/BindingsDashboard";
+import NotFound from "@/pages/NotFound";
 
-import { Toaster } from "@/components/ui/toaster"
-import { TooltipProvider } from "@/components/ui/tooltip"
+const queryClient = new QueryClient();
 
-import Index from "@/pages/Index"
-import ContactCenterLanding from "@/pages/ContactCenterLanding"
-import ConnectorSetup from "@/pages/ConnectorSetup"
-import BitrixCallback from "@/pages/BitrixCallback"
-import NotFound from "@/pages/NotFound"
+const App = () => {
+  const { session } = useSupabaseAuth();
+  useBitrixTokenRefresh();
 
-import Header from "@/components/Header"
-import BindingsDashboard from "@/pages/BindingsDashboard"
-
-const queryClient = new QueryClient()
-
-function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
+        <Toaster />
+        <Sonner />
         <BrowserRouter>
-          <div className="min-h-screen bg-background">
-            <Header />
-            <main className="flex-1">
-              <Routes>
-                <Route path="/" element={<Index />} />
-                <Route path="/contact-center" element={<ContactCenterLanding />} />
-                <Route path="/connector-setup" element={<ConnectorSetup />} />
-                <Route path="/callback" element={<BitrixCallback />} />
-                <Route path="/bitrix-callback" element={<BitrixCallback />} />
-                <Route path="/bindings" element={<BindingsDashboard />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </main>
-            <Toaster />
-          </div>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/contact-center" element={<ContactCenterLanding />} />
+            <Route path="/connector" element={<ConnectorSetup />} />
+            <Route path="/bitrix-callback" element={<BitrixCallback />} />
+            <Route path="/bitrix/callback" element={<BitrixCallback />} />
+            <Route path="/bindings" element={<BindingsDashboard />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
         </BrowserRouter>
       </TooltipProvider>
     </QueryClientProvider>
   );
-}
+};
 
 export default App;
