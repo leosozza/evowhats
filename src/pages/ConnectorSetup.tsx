@@ -14,10 +14,18 @@ export default function ConnectorSetup() {
       toast({ title: "Informe o portal do Bitrix24", variant: "destructive" });
       return;
     }
-    openBitrixPopup(async () => {
-      // Após callback concluir, peça um refresh do status no backend
-      await supabase.functions.invoke("bitrix-token-refresh", { body: {} }).catch(() => {});
-      toast({ title: "Bitrix conectado!" });
+    openBitrixPopup(async ({ ok, reason }) => {
+      if (ok) {
+        // Após callback concluir, peça um refresh do status no backend
+        await supabase.functions.invoke("bitrix-token-refresh", { body: {} }).catch(() => {});
+        toast({ title: "Bitrix conectado!" });
+      } else {
+        toast({ 
+          title: "Falha ao conectar Bitrix", 
+          description: reason || "Verifique o redirect e os logs", 
+          variant: "destructive" 
+        });
+      }
     });
   }
 

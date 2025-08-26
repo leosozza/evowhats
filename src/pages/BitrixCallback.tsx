@@ -8,27 +8,37 @@ export default function BitrixCallback() {
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code");
       const state = params.get("state");
-      const stored = localStorage.getItem("bx_oauth_state");  // <<-- Usando localStorage
-      const payload = { ok: false, reason: "" };
+      const domain = params.get("domain"); // <- Bitrix manda isso no redirect
+      const stored = localStorage.getItem("bx_oauth_state");
+
+      let ok = false;
+      let reason = "";
+
       try {
         if (!code || !state || state !== stored) {
-          payload.reason = "invalid_state";
+          reason = "invalid_state";
         } else {
-          const { error } = await supabase.functions.invoke("bitrix-oauth-exchange", {
-            body: { code, state },
+          const { data, error } = await supabase.functions.invoke("bitrix-oauth-exchange", {
+            body: { code, state, domain },
           });
-          if (error) payload.reason = error.message || "exchange_failed";
-          else payload.ok = true;
+          if (error) {
+            reason = error.message || "exchange_failed";
+          } else if (!data?.ok) {
+            reason = data?.error || "exchange_not_ok";
+          } else {
+            ok = true;
+          }
         }
       } catch (e: any) {
-        payload.reason = e?.message || "unknown";
+        reason = e?.message || "unknown";
       } finally {
         // Limpar o state após uso
         localStorage.removeItem("bx_oauth_state");
-        window.opener?.postMessage({ source: "bitrix-oauth", ...payload }, window.location.origin);
+        window.opener?.postMessage({ source: "bitrix-oauth", ok, reason }, window.location.origin);
         window.close();
       }
     })();
   }, []);
+
   return null;
 }

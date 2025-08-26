@@ -35,20 +35,22 @@ export function buildBitrixAuthUrl(opts: {
   return `https://oauth.bitrix.info/oauth/authorize?${q.toString()}`;
 }
 
-export function openBitrixPopup(onDone: () => void) {
+export function openBitrixPopup(onDone: (result: { ok: boolean; reason?: string }) => void) {
   const state = crypto.randomUUID();
   localStorage.setItem("bx_oauth_state", state);  // <<-- Usando localStorage em vez de sessionStorage
   const clientId = import.meta.env.VITE_BITRIX_CLIENT_ID as string;
   const redirectUri = `${window.location.origin}/bitrix/callback`;
   const scope = "imopenlines imconnector im placement crm user";
   const url = buildBitrixAuthUrl({ clientId, redirectUri, scope, state });
+
   const w = window.open(url, "bx_oauth", "width=520,height=760");
+
   function onMsg(e: MessageEvent) {
     if (e.origin !== window.location.origin) return;
     if (e.data?.source === "bitrix-oauth") {
       window.removeEventListener("message", onMsg);
       try { w?.close?.(); } catch {}
-      onDone();
+      onDone({ ok: !!e.data.ok, reason: e.data.reason });
     }
   }
   window.addEventListener("message", onMsg);
