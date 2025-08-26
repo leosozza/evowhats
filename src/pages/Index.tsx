@@ -1,4 +1,6 @@
 
+import { useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +14,17 @@ import { MessageSquare, Settings, Monitor, GitBranch } from "lucide-react";
 
 const Index = () => {
   const { session, loading } = useSupabaseAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Catch-all: se chegou em / com code/state, redireciona para /bitrix/callback
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("code") && params.get("state")) {
+      console.log("[Index] Detectado OAuth callback na raiz, redirecionando para /bitrix/callback");
+      navigate(`/bitrix/callback?${params.toString()}`, { replace: true });
+    }
+  }, [location, navigate]);
 
   if (loading) {
     return (

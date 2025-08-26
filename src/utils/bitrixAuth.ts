@@ -37,7 +37,7 @@ export function buildBitrixAuthUrl(opts: {
 
 export function openBitrixPopup(onDone: () => void) {
   const state = crypto.randomUUID();
-  sessionStorage.setItem("bx_oauth_state", state);
+  localStorage.setItem("bx_oauth_state", state);  // <<-- Usando localStorage em vez de sessionStorage
   const clientId = import.meta.env.VITE_BITRIX_CLIENT_ID as string;
   const redirectUri = `${window.location.origin}/bitrix/callback`;
   const scope = "imopenlines imconnector im placement crm user";
