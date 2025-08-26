@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -74,13 +73,13 @@ const AutoConnectBitrix = () => {
         const BX24 = window.BX24;
         
         // Se estamos em um iFrame do Bitrix, podemos usar installFinish para confirmar instalação
-        if (BX24.installFinish && typeof BX24.installFinish === 'function') {
+        if (BX24.installFinish) {
           console.log("[AutoConnectBitrix] Calling BX24.installFinish...");
           BX24.installFinish();
         }
         
         // Verificar se o BX24 tem métodos para obter tokens
-        if (BX24.getAuth && typeof BX24.getAuth === 'function') {
+        if (BX24.getAuth) {
           console.log("[AutoConnectBitrix] Getting auth from BX24...");
           const auth = BX24.getAuth();
           
@@ -130,6 +129,8 @@ const AutoConnectBitrix = () => {
           portal_url: portalUrl,
           access_token: auth.access_token,
           refresh_token: auth.refresh_token || '',
+          client_id: import.meta.env.VITE_BITRIX_CLIENT_ID || '',
+          client_secret: '', // Will be handled by backend
           expires_at: expiresAt,
           is_active: true,
           updated_at: new Date().toISOString(),

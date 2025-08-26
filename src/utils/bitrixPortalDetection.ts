@@ -5,6 +5,12 @@ interface BX24Interface {
   getSite?: () => string;
   getLang?: () => { DOMAIN?: string };
   init?: (callback: () => void) => void;
+  installFinish?: () => void;
+  getAuth?: () => {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
 }
 
 declare global {
