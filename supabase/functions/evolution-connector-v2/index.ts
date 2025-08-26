@@ -56,6 +56,43 @@ async function callEvolutionAPI(path: string, method = "GET", body?: any) {
   return { ok: response.ok, status: response.status, data };
 }
 
+const instanceNameForLine = (lineId: string) => `evo_line_${lineId}`;
+
+// Tenta ler binding do DB; se não houver tabela, retorna null (fallback)
+async function getBinding(service: any, lineId: string) {
+  try {
+    const { data } = await service
+      .from("open_channel_bindings")
+      .select("instance_id")
+      .eq("provider", "evolution")
+      .eq("line_id", lineId)
+      .maybeSingle();
+    return data?.instance_id || null;
+  } catch {
+    return null;
+  }
+}
+
+// Upsert binding no DB; se a tabela não existir, apenas segue
+async function upsertBinding(service: any, instanceId: string, lineId: string) {
+  try {
+    const { error } = await service
+      .from("open_channel_bindings")
+      .upsert({
+        provider: "evolution",
+        instance_id: instanceId,
+        line_id: lineId,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: "provider,line_id"
+      });
+    if (error) throw error;
+    return true;
+  } catch {
+    return false; // fallback: ignorar erro de tabela inexistente
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
@@ -86,16 +123,21 @@ serve(async (req) => {
       if (result.ok) {
         const instances = Array.isArray(result.data) ? result.data : [];
         
-        // Get bindings from database
-        const { data: bindings } = await service
-          .from("open_channel_bindings")
-          .select("*")
-          .eq("provider", "evolution");
+        // Get bindings from database with fallback
+        let bindingMap: any = {};
+        try {
+          const { data: bindings } = await service
+            .from("open_channel_bindings")
+            .select("*")
+            .eq("provider", "evolution");
 
-        const bindingMap = (bindings || []).reduce((acc: any, binding: any) => {
-          acc[binding.instance_id] = binding.line_id;
-          return acc;
-        }, {});
+          bindingMap = (bindings || []).reduce((acc: any, binding: any) => {
+            acc[binding.instance_id] = binding.line_id;
+            return acc;
+          }, {});
+        } catch {
+          // Fallback: sem bindings persistidos
+        }
 
         const enhancedInstances = instances.map((inst: any) => ({
           id: inst.instanceName || inst.instance || inst.name,
@@ -118,7 +160,14 @@ serve(async (req) => {
 
     if (action === "ensure_line_session") {
       const { bitrix_line_id, bitrix_line_name } = body;
-      const instanceName = `evo_line_${bitrix_line_id}`;
+      if (!bitrix_line_id) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "missing bitrix_line_id" }),
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      const instanceName = instanceNameForLine(String(bitrix_line_id));
 
       await logStructured(service, {
         category: "EVOLUTION",
@@ -128,31 +177,54 @@ serve(async (req) => {
         data: { bitrix_line_name }
       });
 
-      const result = await callEvolutionAPI("/instance/create", "POST", {
-        instanceName,
-        integration: "WHATSAPP_BAILEYS"
-      });
+      try {
+        const result = await callEvolutionAPI("/instance/create", "POST", {
+          instanceName,
+          integration: "WHATSAPP_BAILEYS"
+        });
 
-      if (result.ok || result.status === 409 || result.status === 400) {
-        return new Response(
-          JSON.stringify({ 
-            ok: true, 
-            instanceName,
-            warn: result.status === 409 ? "already_exists" : undefined
-          }),
-          { headers: corsHeaders }
-        );
+        if (result.ok || result.status === 409 || result.status === 400) {
+          // Grava binding (best effort)
+          await upsertBinding(service, instanceName, String(bitrix_line_id));
+          
+          return new Response(
+            JSON.stringify({ 
+              ok: true, 
+              instanceName,
+              warn: result.status === 409 ? "already_exists" : undefined
+            }),
+            { headers: corsHeaders }
+          );
+        }
+      } catch (e) {
+        const msg = String(e);
+        if (/exist|already/i.test(msg)) {
+          // Instância já existe
+          await upsertBinding(service, instanceName, String(bitrix_line_id));
+          return new Response(
+            JSON.stringify({ ok: true, instanceName, warn: "already_exists" }),
+            { headers: corsHeaders }
+          );
+        }
+        throw e;
       }
 
       return new Response(
-        JSON.stringify({ ok: false, error: result.data?.message || "Failed to create instance" }),
+        JSON.stringify({ ok: false, error: "Failed to create instance" }),
         { status: 500, headers: corsHeaders }
       );
     }
 
     if (action === "start_session_for_line") {
       const { lineId, number } = body;
-      const instanceName = `evo_line_${lineId}`;
+      if (!lineId) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "missing lineId" }),
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      const instanceName = (await getBinding(service, String(lineId))) || instanceNameForLine(String(lineId));
 
       await logStructured(service, {
         category: "EVOLUTION",
@@ -163,14 +235,15 @@ serve(async (req) => {
       });
 
       const connectPath = number 
-        ? `/instance/connect/${instanceName}?number=${encodeURIComponent(number)}`
-        : `/instance/connect/${instanceName}`;
+        ? `/instance/connect/${encodeURIComponent(instanceName)}?number=${encodeURIComponent(number)}`
+        : `/instance/connect/${encodeURIComponent(instanceName)}`;
 
       const result = await callEvolutionAPI(connectPath);
 
       return new Response(
         JSON.stringify({ 
           ok: result.ok, 
+          instanceName,
           data: result.data,
           error: result.ok ? undefined : result.data?.message || "Failed to start session"
         }),
@@ -180,12 +253,19 @@ serve(async (req) => {
 
     if (action === "get_status_for_line") {
       const { lineId } = body;
-      const instanceName = `evo_line_${lineId}`;
+      if (!lineId) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "missing lineId" }),
+          { status: 400, headers: corsHeaders }
+        );
+      }
 
-      const result = await callEvolutionAPI(`/instance/connectionState/${instanceName}`);
+      const instanceName = (await getBinding(service, String(lineId))) || instanceNameForLine(String(lineId));
+
+      const result = await callEvolutionAPI(`/instance/connectionState/${encodeURIComponent(instanceName)}`);
 
       if (result.ok) {
-        const state = result.data?.state || result.data?.status || "unknown";
+        const state = result.data?.instance?.state || result.data?.instance?.status || result.data?.state || result.data?.status || "unknown";
         const normalizedState = state === "open" ? "open" : 
                                state === "connecting" ? "connecting" : 
                                state === "close" ? "close" : "error";
@@ -193,10 +273,9 @@ serve(async (req) => {
         return new Response(
           JSON.stringify({ 
             ok: true, 
-            data: { 
-              state: normalizedState,
-              instanceName
-            }
+            instanceName,
+            state: normalizedState,
+            data: result.data
           }),
           { headers: corsHeaders }
         );
@@ -210,20 +289,29 @@ serve(async (req) => {
 
     if (action === "get_qr_for_line") {
       const { lineId } = body;
-      const instanceName = `evo_line_${lineId}`;
+      if (!lineId) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "missing lineId" }),
+          { status: 400, headers: corsHeaders }
+        );
+      }
 
-      const result = await callEvolutionAPI(`/instance/connectionState/${instanceName}`);
+      const instanceName = (await getBinding(service, String(lineId))) || instanceNameForLine(String(lineId));
+
+      const result = await callEvolutionAPI(`/instance/connectionState/${encodeURIComponent(instanceName)}`);
 
       if (result.ok) {
-        const qrCode = result.data?.qrcode?.base64 || result.data?.base64 || result.data?.qr_base64;
+        const qrData = result.data?.qrcode || result.data?.qRCode || result.data?.qrCode || null;
+        const qrBase64 = qrData?.base64 || result.data?.base64 || result.data?.qr_base64 || null;
+        const pairingCode = qrData?.pairingCode || result.data?.pairingCode || null;
         
         return new Response(
           JSON.stringify({ 
             ok: true, 
-            data: { 
-              qr_base64: qrCode ? `data:image/png;base64,${qrCode}` : null,
-              state: result.data?.state || "unknown"
-            }
+            instanceName,
+            qr_base64: qrBase64 ? `data:image/png;base64,${qrBase64}` : null,
+            pairing_code: pairingCode,
+            state: result.data?.instance?.state || result.data?.state || "unknown"
           }),
           { headers: corsHeaders }
         );
@@ -237,52 +325,47 @@ serve(async (req) => {
 
     if (action === "bind_line") {
       const { instanceId, lineId } = body;
-
-      const { error } = await service
-        .from("open_channel_bindings")
-        .upsert({
-          provider: "evolution",
-          instance_id: instanceId,
-          line_id: lineId,
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: "provider,instance_id"
-        });
-
-      if (error) {
+      if (!instanceId || !lineId) {
         return new Response(
-          JSON.stringify({ ok: false, error: error.message }),
-          { status: 500, headers: corsHeaders }
+          JSON.stringify({ ok: false, error: "missing instanceId/lineId" }),
+          { status: 400, headers: corsHeaders }
         );
       }
+
+      const success = await upsertBinding(service, String(instanceId), String(lineId));
 
       await logStructured(service, {
         category: "BINDING",
         action: "bind_line",
         lineId,
         instanceName: instanceId,
-        data: { bound: true }
+        data: { bound: success }
       });
 
       return new Response(
-        JSON.stringify({ ok: true }),
+        JSON.stringify({ ok: success, instanceId, lineId }),
         { headers: corsHeaders }
       );
     }
 
     if (action === "test_send") {
       const { lineId, to, text = "Ping de teste" } = body;
-      const instanceName = `evo_line_${lineId}`;
+      if (!lineId || !to) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "missing lineId/to" }),
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      const instanceName = (await getBinding(service, String(lineId))) || instanceNameForLine(String(lineId));
+      const payload = { number: String(to), text: String(text) };
 
       const delays = [1000, 3000, 7000];
       let lastError;
 
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const result = await callEvolutionAPI(`/message/sendText/${instanceName}`, "POST", {
-            number: to,
-            text
-          });
+          const result = await callEvolutionAPI(`/message/sendText/${encodeURIComponent(instanceName)}`, "POST", payload);
 
           if (result.ok) {
             await logStructured(service, {
@@ -294,7 +377,7 @@ serve(async (req) => {
             });
 
             return new Response(
-              JSON.stringify({ ok: true, data: result.data }),
+              JSON.stringify({ ok: true, instanceName, data: result.data }),
               { headers: corsHeaders }
             );
           }

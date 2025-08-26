@@ -92,7 +92,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
       if (statusError) throw statusError;
       if (!statusResult?.ok) throw new Error(statusResult?.error || "Failed to get status");
 
-      const state = normalizeState(statusResult?.data?.state || "unknown");
+      const state = normalizeState(statusResult?.state || statusResult?.data?.state || "unknown");
       setStatusByLine(prev => ({ ...prev, [line.ID]: state }));
 
       if (isConnected(state)) {
@@ -109,9 +109,12 @@ export function useLineEvolution(): UseLineEvolutionApi {
             },
           });
 
-          if (!qrError && qrResult?.ok && qrResult?.data?.qr_base64) {
-            setQrByLine(prev => ({ ...prev, [line.ID]: qrResult.data.qr_base64 }));
+          if (!qrError && qrResult?.ok && qrResult?.qr_base64) {
+            setQrByLine(prev => ({ ...prev, [line.ID]: qrResult.qr_base64 }));
             console.log(`[useLineEvolution] QR updated for line ${line.ID}`);
+          } else if (qrResult?.pairing_code) {
+            // If pairing code is available, show it as text instead of QR
+            console.log(`[useLineEvolution] Pairing code available for line ${line.ID}: ${qrResult.pairing_code}`);
           }
         } catch (qrErr) {
           console.warn("[useLineEvolution] QR fetch failed:", qrErr);
