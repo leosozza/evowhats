@@ -37,21 +37,40 @@ export function buildBitrixAuthUrl(opts: {
 
 export function openBitrixPopup(onDone: (result: { ok: boolean; reason?: string }) => void) {
   const state = crypto.randomUUID();
-  localStorage.setItem("bx_oauth_state", state);  // <<-- Usando localStorage em vez de sessionStorage
+  localStorage.setItem("bx_oauth_state", state);
+  
   const clientId = import.meta.env.VITE_BITRIX_CLIENT_ID as string;
   const redirectUri = `${window.location.origin}/bitrix/callback`;
   const scope = "imopenlines imconnector im placement crm user";
   const url = buildBitrixAuthUrl({ clientId, redirectUri, scope, state });
+
+  console.log("[bitrixAuth] Opening popup with URL:", url);
 
   const w = window.open(url, "bx_oauth", "width=520,height=760");
 
   function onMsg(e: MessageEvent) {
     if (e.origin !== window.location.origin) return;
     if (e.data?.source === "bitrix-oauth") {
+      console.log("[bitrixAuth] Received message from popup:", e.data);
+      
       window.removeEventListener("message", onMsg);
       try { w?.close?.(); } catch {}
-      onDone({ ok: !!e.data.ok, reason: e.data.reason });
+      
+      onDone({ 
+        ok: !!e.data.ok, 
+        reason: e.data.reason 
+      });
     }
   }
+  
   window.addEventListener("message", onMsg);
+
+  // Timeout fallback
+  setTimeout(() => {
+    if (!w?.closed) {
+      window.removeEventListener("message", onMsg);
+      try { w?.close?.(); } catch {}
+      onDone({ ok: false, reason: "timeout" });
+    }
+  }, 120000); // 2 minutes
 }

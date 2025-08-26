@@ -3,70 +3,133 @@ import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useLineEvolution } from "@/hooks/useLineEvolution";
+import { 
+  QrCode, 
+  Play, 
+  RefreshCw, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Send, 
+  Link,
+  Phone
+} from "lucide-react";
 
 export default function BindingsDashboard() {
   const [instances, setInstances] = useState<any[]>([]);
   const [lines, setLines] = useState<any[]>([]);
   const [selectedTo, setSelectedTo] = useState<string>("");
-  const { startSession, testSend } = useLineEvolution();
+  const [refreshing, setRefreshing] = useState(false);
+  
+  const { 
+    loadingLine, 
+    statusByLine, 
+    qrByLine, 
+    startSession, 
+    refreshStatus,
+    startPolling, 
+    testSend 
+  } = useLineEvolution();
 
   async function refresh() {
-    const inst = await supabase.functions.invoke("evolution-connector-v2", {
-      body: { action: "list_instances" },
-    });
-    setInstances(inst.data?.instances || []);
-    const ln = await supabase.functions.invoke("bitrix-openlines", {
-      body: { action: "list_lines" },
-    });
-    setLines(ln.data?.lines || []);
+    setRefreshing(true);
+    try {
+      // Get Evolution instances
+      const { data: instData, error: instError } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "list_instances" },
+      });
+      
+      if (instError) {
+        console.error("Failed to fetch instances:", instError);
+        toast({ 
+          title: "Erro ao buscar instâncias", 
+          description: instError.message,
+          variant: "destructive" 
+        });
+      } else {
+        setInstances(instData?.instances || []);
+      }
+
+      // Get Bitrix Open Lines
+      const { data: linesData, error: linesError } = await supabase.functions.invoke("bitrix-openlines", {
+        body: { action: "list_lines" },
+      });
+      
+      if (linesError) {
+        console.error("Failed to fetch lines:", linesError);
+        toast({ 
+          title: "Erro ao buscar linhas", 
+          description: linesError.message,
+          variant: "destructive" 
+        });
+      } else {
+        setLines(linesData?.lines || []);
+      }
+    } finally {
+      setRefreshing(false);
+    }
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { 
+    refresh(); 
+  }, []);
 
   async function bind(instanceId: string, lineId: string) {
-    const { error } = await supabase.functions.invoke("evolution-connector-v2", {
-      body: { action: "bind_line", instanceId, lineId },
-    });
-    if (error) toast({ title: "Falha ao vincular", variant: "destructive" });
-    else toast({ title: "Vinculado!" });
-    refresh();
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "bind_line", instanceId, lineId },
+      });
+      
+      if (error) throw error;
+      if (!data?.ok) throw new Error("Failed to bind line");
+      
+      toast({ title: "Linha vinculada com sucesso!" });
+      refresh();
+    } catch (error: any) {
+      toast({ 
+        title: "Falha ao vincular linha", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    }
   }
 
-  async function startSessionForInstance(instanceId: string, lineId: string) {
+  async function handleStartSession(instanceId: string, lineId: string) {
     if (!lineId) {
       toast({ title: "Vincule uma linha primeiro", variant: "destructive" });
       return;
     }
+    
     try {
-      await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "start_session_for_line", lineId },
-      });
-      toast({ title: "Sessão iniciada" });
+      const line = { ID: lineId, NAME: `Line ${lineId}` };
+      await startSession(line);
+      startPolling(line);
+      toast({ title: "Sessão iniciada com sucesso!" });
     } catch (error: any) {
-      toast({ title: "Erro ao iniciar sessão", description: error.message, variant: "destructive" });
+      toast({ 
+        title: "Erro ao iniciar sessão", 
+        description: error.message, 
+        variant: "destructive" 
+      });
     }
   }
 
-  async function showQr(instanceId: string, lineId: string) {
-    if (!lineId) {
-      toast({ title: "Vincule uma linha primeiro", variant: "destructive" });
-      return;
-    }
+  async function handleRefreshStatus(lineId: string) {
+    if (!lineId) return;
+    
     try {
-      const qr = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "get_qr_for_line", lineId },
-      });
-      if (qr.data?.qr_base64) {
-        const w = window.open();
-        if (w) w.document.write(`<img src="${qr.data.qr_base64}" />`);
-      } else {
-        toast({ title: "QR não disponível", variant: "destructive" });
-      }
+      const line = { ID: lineId, NAME: `Line ${lineId}` };
+      await refreshStatus(line);
+      toast({ title: "Status atualizado!" });
     } catch (error: any) {
-      toast({ title: "Erro ao obter QR", description: error.message, variant: "destructive" });
+      toast({ 
+        title: "Erro ao atualizar status", 
+        description: error.message, 
+        variant: "destructive" 
+      });
     }
   }
 
@@ -75,81 +138,242 @@ export default function BindingsDashboard() {
       toast({ title: "Informe um número de telefone", variant: "destructive" });
       return;
     }
+    
+    if (!lineId) {
+      toast({ title: "Vincule uma linha primeiro", variant: "destructive" });
+      return;
+    }
+    
     try {
       await testSend(lineId, selectedTo);
-      toast({ title: "Mensagem de teste enviada!" });
+      toast({ title: "Mensagem de teste enviada com sucesso!" });
     } catch (error: any) {
-      toast({ title: "Erro no teste", description: error.message, variant: "destructive" });
+      toast({ 
+        title: "Erro no teste de envio", 
+        description: error.message, 
+        variant: "destructive" 
+      });
     }
   }
 
-  return (
-    <div className="grid gap-6 md:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Instâncias Evolution</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {instances.map((it) => (
-            <div key={it.id} className="border rounded p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">{it.label || it.id}</div>
-                  <div className="text-sm text-muted-foreground">Status: {it.status}</div>
-                </div>
-                <div className="space-x-2">
-                  <Button 
-                    size="sm" 
-                    onClick={() => startSessionForInstance(it.id, it.bound_line_id || "")}
-                  >
-                    Iniciar
-                  </Button>
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    onClick={() => showQr(it.id, it.bound_line_id || "")}
-                  >
-                    Mostrar QR
-                  </Button>
-                </div>
-              </div>
-              <div className="flex gap-2 items-center">
-                <select
-                  className="border rounded p-2 flex-1"
-                  value={it.bound_line_id || ""}
-                  onChange={(e) => bind(it.id, e.target.value)}
-                >
-                  <option value="">Vincular a uma linha...</option>
-                  {lines.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name} (id {l.id})
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  placeholder="Telefone teste (E.164)"
-                  value={selectedTo}
-                  onChange={(e) => setSelectedTo(e.target.value)}
-                />
-                <Button onClick={() => handleTestSend(it.bound_line_id)}>Testar envio</Button>
-              </div>
-            </div>
-          ))}
-          {instances.length === 0 && <div className="text-sm text-muted-foreground">Nenhuma instância encontrada.</div>}
-        </CardContent>
-      </Card>
+  function getStatusBadge(status: string) {
+    const state = status.toLowerCase();
+    
+    if (state.includes("open") || state.includes("connected")) {
+      return (
+        <Badge className="gap-1 bg-green-100 text-green-800">
+          <CheckCircle2 className="h-3 w-3" />
+          Conectado
+        </Badge>
+      );
+    }
+    
+    if (state.includes("connecting") || state.includes("qr")) {
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <AlertTriangle className="h-3 w-3 text-orange-500" />
+          Conectando
+        </Badge>
+      );
+    }
+    
+    return (
+      <Badge variant="outline">
+        {status || "Desconhecido"}
+      </Badge>
+    );
+  }
 
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Painel de Integrações</h1>
+        <Button onClick={refresh} disabled={refreshing}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Atualizando..." : "Atualizar"}
+        </Button>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Evolution Instances */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5" />
+              Instâncias Evolution API
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {instances.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                Nenhuma instância encontrada.
+                <br />
+                Configure a Evolution API nas configurações.
+              </div>
+            ) : (
+              instances.map((instance) => {
+                const lineId = instance.bound_line_id;
+                const currentStatus = lineId ? statusByLine[lineId] || instance.status : instance.status;
+                const qrCode = lineId ? qrByLine[lineId] : null;
+                const isLoading = lineId ? loadingLine === lineId : false;
+
+                return (
+                  <Card key={instance.id} className="p-4">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium">{instance.label}</div>
+                          <div className="text-sm text-muted-foreground">ID: {instance.id}</div>
+                        </div>
+                        {getStatusBadge(currentStatus)}
+                      </div>
+
+                      {/* Line Binding */}
+                      <div className="flex gap-2 items-center">
+                        <Link className="h-4 w-4 text-muted-foreground" />
+                        <select
+                          className="flex-1 border rounded p-2 text-sm"
+                          value={lineId || ""}
+                          onChange={(e) => bind(instance.id, e.target.value)}
+                        >
+                          <option value="">Vincular à linha Open Lines...</option>
+                          {lines.map((line) => (
+                            <option key={line.id} value={line.id}>
+                              {line.name} (ID: {line.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handleStartSession(instance.id, lineId)}
+                          disabled={!lineId || isLoading}
+                          className="bg-green-600 hover:bg-green-700"
+                        >
+                          <Play className="h-4 w-4 mr-1" />
+                          Iniciar/QR
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRefreshStatus(lineId)}
+                          disabled={!lineId || isLoading}
+                        >
+                          <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
+                          Status
+                        </Button>
+                      </div>
+
+                      {/* Test Send */}
+                      <div className="flex gap-2 items-center">
+                        <Phone className="h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Telefone para teste (ex: +5511999999999)"
+                          value={selectedTo}
+                          onChange={(e) => setSelectedTo(e.target.value)}
+                          className="flex-1"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={() => handleTestSend(lineId)}
+                          disabled={!lineId || !selectedTo.trim()}
+                        >
+                          <Send className="h-4 w-4 mr-1" />
+                          Testar
+                        </Button>
+                      </div>
+
+                      {/* QR Code Display */}
+                      {qrCode && (
+                        <div className="mt-4 p-4 bg-gray-50 rounded-lg text-center">
+                          <img
+                            src={qrCode}
+                            alt={`QR Code para ${instance.label}`}
+                            className="w-48 h-48 mx-auto border rounded bg-white p-2"
+                          />
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <QrCode className="h-4 w-4 inline mr-1" />
+                            Escaneie este QR no WhatsApp para conectar
+                          </div>
+                        </div>
+                      )}
+
+                      {isLoading && (
+                        <div className="flex items-center justify-center text-sm text-muted-foreground">
+                          <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                          Processando...
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Bitrix Open Lines */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Phone className="h-5 w-5" />
+              Linhas Open Lines (Bitrix24)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {lines.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                Nenhuma linha encontrada.
+                <br />
+                Configure o Bitrix24 primeiro.
+              </div>
+            ) : (
+              lines.map((line) => {
+                const currentStatus = statusByLine[line.id] || "unknown";
+                const hasQr = !!qrByLine[line.id];
+                
+                return (
+                  <Card key={line.id} className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">{line.name}</div>
+                        <div className="text-sm text-muted-foreground">
+                          ID: {line.id} | Status: {currentStatus}
+                        </div>
+                        {hasQr && (
+                          <div className="text-xs text-orange-600 mt-1">
+                            QR Code disponível para escaneamento
+                          </div>
+                        )}
+                      </div>
+                      {getStatusBadge(currentStatus)}
+                    </div>
+                  </Card>
+                );
+              })
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Instructions */}
       <Card>
-        <CardHeader>
-          <CardTitle>Linhas Open Lines</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {lines.map((l) => (
-            <div key={l.id} className="border rounded p-2">
-              <div className="font-medium">{l.name}</div>
-              <div className="text-sm text-muted-foreground">ID: {l.id}</div>
-            </div>
-          ))}
+        <CardContent className="pt-6">
+          <div className="text-sm space-y-2">
+            <h3 className="font-medium">Como usar:</h3>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+              <li>Configure a Evolution API nas configurações</li>
+              <li>Configure o Bitrix24 OAuth</li>
+              <li>Vincule uma instância Evolution a uma linha Open Lines</li>
+              <li>Clique em "Iniciar/QR" para conectar</li>
+              <li>Escaneie o QR Code no WhatsApp</li>
+              <li>Teste o envio com um número válido</li>
+            </ol>
+          </div>
         </CardContent>
       </Card>
     </div>

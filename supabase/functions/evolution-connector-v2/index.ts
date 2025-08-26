@@ -5,8 +5,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const EVOLUTION_BASE_URL = Deno.env.get("EVOLUTION_BASE_URL") || "";
 const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY") || "";
-const EVOLUTION_BASE_URL = Deno.env.get("EVOLUTION_BASE_URL") || "https://evolution-api.example.com";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,19 +17,17 @@ const corsHeaders = {
 async function logStructured(service: any, log: any) {
   try {
     await service.from("webhook_logs").insert({
-      provider: log.provider || "evolution",
+      provider: "evolution",
       payload_json: {
         category: log.category,
-        tenantId: log.tenantId,
-        instanceId: log.instanceId,
-        conversationId: log.conversationId,
-        chatId: log.chatId,
-        direction: log.direction,
-        provider: log.provider,
-        msgKey: log.msgKey,
+        action: log.action,
+        lineId: log.lineId,
+        instanceName: log.instanceName,
+        state: log.state,
+        provider: "evolution",
         data: log.data || {}
       },
-      valid_signature: log.valid_signature ?? true,
+      valid_signature: true,
       received_at: new Date().toISOString()
     });
   } catch (e) {
@@ -37,92 +35,25 @@ async function logStructured(service: any, log: any) {
   }
 }
 
-async function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+async function callEvolutionAPI(path: string, method = "GET", body?: any) {
+  const url = `${EVOLUTION_BASE_URL}${path}`;
+  const options: RequestInit = {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": EVOLUTION_API_KEY,
+    },
+  };
 
-async function sendWithRetries(instanceName: string, phoneNumber: string, message: string, service: any, tenantId: string): Promise<any> {
-  const maxRetries = 3;
-  const backoffDelays = [1000, 3000, 7000]; // 1s, 3s, 7s
-  
-  let lastError;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const response = await fetch(`${EVOLUTION_BASE_URL}/message/sendText/${instanceName}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": EVOLUTION_API_KEY,
-        },
-        body: JSON.stringify({
-          number: phoneNumber,
-          text: message,
-        }),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        
-        await logStructured(service, {
-          category: "OUTBOUND",
-          tenantId,
-          instanceId: instanceName,
-          direction: "out",
-          provider: "evolution",
-          data: { 
-            attempt: attempt + 1, 
-            success: true, 
-            phoneNumber, 
-            message: message.substring(0, 100) 
-          }
-        });
-
-        return { success: true, data: result };
-      } else {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-    } catch (error: any) {
-      lastError = error;
-      
-      await logStructured(service, {
-        category: "OUTBOUND",
-        tenantId,
-        instanceId: instanceName,
-        direction: "out",
-        provider: "evolution",
-        data: { 
-          attempt: attempt + 1, 
-          success: false, 
-          error: error.message,
-          phoneNumber 
-        }
-      });
-
-      console.error(`[evolution-connector-v2] Attempt ${attempt + 1} failed:`, error.message);
-
-      if (attempt < maxRetries - 1) {
-        await sleep(backoffDelays[attempt]);
-      }
-    }
+  if (body && method !== "GET") {
+    options.body = JSON.stringify(body);
   }
 
-  // All retries failed
-  await logStructured(service, {
-    category: "OUTBOUND",
-    tenantId,
-    instanceId: instanceName,
-    direction: "out",
-    provider: "evolution",
-    data: { 
-      final_failure: true, 
-      error: lastError?.message,
-      phoneNumber,
-      attempts: maxRetries 
-    }
-  });
-
-  return { success: false, error: lastError?.message || "All retries failed" };
+  console.log(`[evolution-connector-v2] ${method} ${url}`);
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  
+  return { ok: response.ok, status: response.status, data };
 }
 
 serve(async (req) => {
@@ -137,193 +68,277 @@ serve(async (req) => {
     );
   }
 
-  if (req.method !== "POST") {
-    return new Response(
-      JSON.stringify({ error: "Method not allowed" }),
-      { status: 405, headers: corsHeaders }
-    );
-  }
-
   const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
     const body = await req.json();
     const { action } = body;
 
-    if (action === "send_message") {
-      const { bitrix_line_id, phone_number, message, tenantId } = body;
+    await logStructured(service, {
+      category: "REQUEST",
+      action,
+      data: { action, ...body }
+    });
 
-      if (!bitrix_line_id || !phone_number || !message || !tenantId) {
-        return new Response(
-          JSON.stringify({ error: "Missing required fields" }),
-          { status: 400, headers: corsHeaders }
-        );
-      }
-
-      // Get session for this line
-      const { data: session } = await service
-        .from("wa_sessions")
-        .select("*")
-        .eq("bitrix_line_id", bitrix_line_id)
-        .eq("user_id", tenantId)
-        .limit(1)
-        .maybeSingle();
-
-      if (!session) {
-        return new Response(
-          JSON.stringify({ error: "No session found for this line" }),
-          { status: 404, headers: corsHeaders }
-        );
-      }
-
-      const instanceName = session.evo_instance_id;
-
-      // Find or create conversation
-      const { data: conversation } = await service
-        .from("conversations")
-        .select("*")
-        .eq("user_id", tenantId)
-        .eq("contact_phone", phone_number)
-        .eq("evolution_instance", instanceName)
-        .limit(1)
-        .maybeSingle();
-
-      let conversationId = conversation?.id;
-      if (!conversationId) {
-        const ins = await service
-          .from("conversations")
-          .insert({
-            user_id: tenantId,
-            contact_phone: phone_number,
-            evolution_instance: instanceName,
-            openlines_chat_id: null,
-            last_message_at: new Date().toISOString(),
-            status: "open"
-          })
-          .select("id")
-          .maybeSingle();
+    if (action === "list_instances") {
+      const result = await callEvolutionAPI("/instance/fetchInstances");
+      
+      if (result.ok) {
+        const instances = Array.isArray(result.data) ? result.data : [];
         
-        if (ins.error) throw ins.error;
-        conversationId = ins.data?.id;
+        // Get bindings from database
+        const { data: bindings } = await service
+          .from("open_channel_bindings")
+          .select("*")
+          .eq("provider", "evolution");
+
+        const bindingMap = (bindings || []).reduce((acc: any, binding: any) => {
+          acc[binding.instance_id] = binding.line_id;
+          return acc;
+        }, {});
+
+        const enhancedInstances = instances.map((inst: any) => ({
+          id: inst.instanceName || inst.instance || inst.name,
+          label: inst.instanceName || inst.instance || inst.name,
+          status: inst.state || inst.status || "unknown",
+          bound_line_id: bindingMap[inst.instanceName || inst.instance || inst.name] || null,
+        }));
+
+        return new Response(
+          JSON.stringify({ ok: true, instances: enhancedInstances }),
+          { headers: corsHeaders }
+        );
       }
-
-      // Create message record with queued status
-      const { data: messageRecord } = await service
-        .from("messages")
-        .insert({
-          conversation_id: conversationId,
-          direction: "out",
-          message_type: "text",
-          content: message,
-          sender_name: "System",
-          status: "sending",
-          delivery_status: "queued",
-          retry_count: 0
-        })
-        .select("id")
-        .single();
-
-      // Send with retries
-      const result = await sendWithRetries(instanceName, phone_number, message, service, tenantId);
-
-      // Update message status
-      await service
-        .from("messages")
-        .update({
-          delivery_status: result.success ? "sent" : "failed",
-          status: result.success ? "sent" : "failed",
-          error_details: result.success ? null : result.error,
-          retry_count: 3 // Max attempts made
-        })
-        .eq("id", messageRecord.id);
 
       return new Response(
-        JSON.stringify({
-          success: result.success,
-          message_id: messageRecord.id,
-          delivery_status: result.success ? "sent" : "failed",
-          error: result.error
+        JSON.stringify({ ok: false, error: "Failed to fetch instances" }),
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    if (action === "ensure_line_session") {
+      const { bitrix_line_id, bitrix_line_name } = body;
+      const instanceName = `evo_line_${bitrix_line_id}`;
+
+      await logStructured(service, {
+        category: "EVOLUTION",
+        action: "ensure_line_session",
+        lineId: bitrix_line_id,
+        instanceName,
+        data: { bitrix_line_name }
+      });
+
+      const result = await callEvolutionAPI("/instance/create", "POST", {
+        instanceName,
+        integration: "WHATSAPP_BAILEYS"
+      });
+
+      if (result.ok || result.status === 409 || result.status === 400) {
+        return new Response(
+          JSON.stringify({ 
+            ok: true, 
+            instanceName,
+            warn: result.status === 409 ? "already_exists" : undefined
+          }),
+          { headers: corsHeaders }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ ok: false, error: result.data?.message || "Failed to create instance" }),
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    if (action === "start_session_for_line") {
+      const { lineId, number } = body;
+      const instanceName = `evo_line_${lineId}`;
+
+      await logStructured(service, {
+        category: "EVOLUTION",
+        action: "start_session_for_line",
+        lineId,
+        instanceName,
+        data: { number }
+      });
+
+      const connectPath = number 
+        ? `/instance/connect/${instanceName}?number=${encodeURIComponent(number)}`
+        : `/instance/connect/${instanceName}`;
+
+      const result = await callEvolutionAPI(connectPath);
+
+      return new Response(
+        JSON.stringify({ 
+          ok: result.ok, 
+          data: result.data,
+          error: result.ok ? undefined : result.data?.message || "Failed to start session"
         }),
         { headers: corsHeaders }
       );
     }
 
     if (action === "get_status_for_line") {
-      const { bitrix_line_id, tenantId } = body;
+      const { lineId } = body;
+      const instanceName = `evo_line_${lineId}`;
 
-      if (!bitrix_line_id || !tenantId) {
-        return new Response(
-          JSON.stringify({ error: "Missing required fields" }),
-          { status: 400, headers: corsHeaders }
-        );
-      }
+      const result = await callEvolutionAPI(`/instance/connectionState/${instanceName}`);
 
-      // Get session for this line
-      const { data: session } = await service
-        .from("wa_sessions")
-        .select("*")
-        .eq("bitrix_line_id", bitrix_line_id)
-        .eq("user_id", tenantId)
-        .limit(1)
-        .maybeSingle();
+      if (result.ok) {
+        const state = result.data?.state || result.data?.status || "unknown";
+        const normalizedState = state === "open" ? "open" : 
+                               state === "connecting" ? "connecting" : 
+                               state === "close" ? "close" : "error";
 
-      if (!session) {
         return new Response(
           JSON.stringify({ 
-            success: false, 
-            status: "not_found",
-            error: "No session found for this line" 
+            ok: true, 
+            data: { 
+              state: normalizedState,
+              instanceName
+            }
           }),
           { headers: corsHeaders }
         );
       }
 
-      const instanceName = session.evo_instance_id;
+      return new Response(
+        JSON.stringify({ ok: false, error: "Failed to get status" }),
+        { headers: corsHeaders }
+      );
+    }
 
-      try {
-        // Get instance status from Evolution API
-        const response = await fetch(`${EVOLUTION_BASE_URL}/instance/connectionState/${instanceName}`, {
-          headers: { "apikey": EVOLUTION_API_KEY },
+    if (action === "get_qr_for_line") {
+      const { lineId } = body;
+      const instanceName = `evo_line_${lineId}`;
+
+      const result = await callEvolutionAPI(`/instance/connectionState/${instanceName}`);
+
+      if (result.ok) {
+        const qrCode = result.data?.qrcode?.base64 || result.data?.base64 || result.data?.qr_base64;
+        
+        return new Response(
+          JSON.stringify({ 
+            ok: true, 
+            data: { 
+              qr_base64: qrCode ? `data:image/png;base64,${qrCode}` : null,
+              state: result.data?.state || "unknown"
+            }
+          }),
+          { headers: corsHeaders }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ ok: false, error: "Failed to get QR" }),
+        { headers: corsHeaders }
+      );
+    }
+
+    if (action === "bind_line") {
+      const { instanceId, lineId } = body;
+
+      const { error } = await service
+        .from("open_channel_bindings")
+        .upsert({
+          provider: "evolution",
+          instance_id: instanceId,
+          line_id: lineId,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: "provider,instance_id"
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          return new Response(
-            JSON.stringify({
-              success: true,
-              status: data.state || "unknown",
-              instance_name: instanceName,
-              line_id: bitrix_line_id,
-              session_data: session
-            }),
-            { headers: corsHeaders }
-          );
-        } else {
-          throw new Error(`HTTP ${response.status}`);
-        }
-      } catch (error: any) {
+      if (error) {
         return new Response(
-          JSON.stringify({
-            success: false,
-            status: "error",
-            error: error.message,
-            instance_name: instanceName,
-            line_id: bitrix_line_id
-          }),
-          { headers: corsHeaders }
+          JSON.stringify({ ok: false, error: error.message }),
+          { status: 500, headers: corsHeaders }
         );
       }
+
+      await logStructured(service, {
+        category: "BINDING",
+        action: "bind_line",
+        lineId,
+        instanceName: instanceId,
+        data: { bound: true }
+      });
+
+      return new Response(
+        JSON.stringify({ ok: true }),
+        { headers: corsHeaders }
+      );
+    }
+
+    if (action === "test_send") {
+      const { lineId, to, text = "Ping de teste" } = body;
+      const instanceName = `evo_line_${lineId}`;
+
+      const delays = [1000, 3000, 7000];
+      let lastError;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const result = await callEvolutionAPI(`/message/sendText/${instanceName}`, "POST", {
+            number: to,
+            text
+          });
+
+          if (result.ok) {
+            await logStructured(service, {
+              category: "OUTBOUND",
+              action: "test_send",
+              lineId,
+              instanceName,
+              data: { success: true, attempt: attempt + 1, to, text }
+            });
+
+            return new Response(
+              JSON.stringify({ ok: true, data: result.data }),
+              { headers: corsHeaders }
+            );
+          }
+
+          lastError = result.data?.message || "Send failed";
+        } catch (error: any) {
+          lastError = error.message;
+        }
+
+        if (attempt < 2) {
+          await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+        }
+      }
+
+      await logStructured(service, {
+        category: "OUTBOUND",
+        action: "test_send",
+        lineId,
+        instanceName,
+        data: { success: false, error: lastError, to }
+      });
+
+      return new Response(
+        JSON.stringify({ ok: false, error: lastError }),
+        { status: 500, headers: corsHeaders }
+      );
     }
 
     return new Response(
-      JSON.stringify({ error: "Unknown action" }),
+      JSON.stringify({ ok: false, error: "Unknown action" }),
       { status: 400, headers: corsHeaders }
     );
 
   } catch (error: any) {
     console.error("[evolution-connector-v2] Error:", error);
+    
+    await logStructured(service, {
+      category: "ERROR",
+      action: "unknown",
+      data: { error: error.message }
+    });
+
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ ok: false, error: error.message }),
       { status: 500, headers: corsHeaders }
     );
   }

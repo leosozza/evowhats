@@ -1,310 +1,166 @@
 
-// supabase/functions/bitrix-openlines/index.ts
-// Deno Edge Function — Bitrix Open Channels wrapper (sessions + send message)
-// Ajustes: resolução de line_id via open_channel_bindings (tenantId + instanceId) com fallback para lineId
-// e logging em webhook_logs
-
+import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-type Json = Record<string, unknown>;
-
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const cors = {
+
+const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST,OPTIONS",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-function ok(data: any, status = 200) {
-  // Mantém contrato existente: { success: true, data }
-  return new Response(JSON.stringify({ success: true, data }), { status, headers: { ...cors, "Content-Type": "application/json" } });
-}
-function ko(message: string, status = 400, details?: any) {
-  return new Response(JSON.stringify({ success: false, error: message, details }), { status, headers: { ...cors, "Content-Type": "application/json" } });
-}
-
-type StartSessionInput = {
-  tenantId: string;
-  portalUrl?: string;
-  lineId?: string;
-  instanceId?: string; // novo: para resolver via open_channel_bindings
-  contact: { userId?: number; phone?: string; name?: string };
-};
-type EnsureChatInput = {
-  tenantId: string;
-  bitrixChatId?: string | null;
-  lineId?: string;
-  instanceId?: string; // novo
-  contact: { phone?: string; name?: string };
-};
-type SendMessageInput = {
-  tenantId: string;
-  bitrixChatId?: string | null;
-  text?: string;
-  fileUrl?: string;
-  replyToMid?: number;
-  ensure?: EnsureChatInput;
-};
-type CloseSessionInput = {
-  tenantId: string;
-  bitrixChatId: string;
-};
-
-type TokenRow = {
-  id: string;
-  tenant_id: string;
-  portal_url: string;
-  access_token: string;
-  refresh_token: string | null;
-  expires_at: string | null;
-  client_id: string;
-  client_secret: string;
-};
-
-async function getServiceClient() {
-  return createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-}
-
-async function logWebhook(client: ReturnType<typeof createClient>, action: string, payload: any, valid = true) {
-  try {
-    await (await client)
-      .from("webhook_logs")
-      .insert({
-        provider: "bitrix-openlines",
-        payload_json: { action, payload },
-        valid_signature: valid,
-      });
-  } catch (_e) {
-    // ignore logging errors
+async function getBitrixTokens(service: any, portalUrl?: string) {
+  const query = service.from("bitrix_credentials").select("*").eq("is_active", true);
+  
+  if (portalUrl) {
+    query.eq("portal_url", portalUrl);
   }
-}
-
-async function getTenantTokens(client: ReturnType<typeof createClient>, tenantId: string): Promise<TokenRow> {
-  const { data: tokens, error: tokensError } = await client
-    .from("bitrix_tokens")
-    .select("*")
-    .eq("tenant_id", tenantId)
-    .limit(1)
-    .maybeSingle();
-
-  if (tokensError || !tokens) {
-    throw new Error("bitrix_tokens not found for tenant");
+  
+  const { data, error } = await query.limit(1).maybeSingle();
+  
+  if (error || !data) {
+    throw new Error("No active Bitrix credentials found");
   }
+  
+  return data;
+}
 
-  const { data: tenant, error: tenantError } = await client
-    .from("tenants")
-    .select("portal_url, client_id, client_secret")
-    .eq("id", tenantId)
-    .maybeSingle();
-
-  if (tenantError || !tenant) {
-    throw new Error("tenant not found");
+async function refreshTokenIfNeeded(service: any, credentials: any) {
+  const expiresAt = new Date(credentials.expires_at);
+  const now = new Date();
+  const buffer = 5 * 60 * 1000; // 5 minutes buffer
+  
+  if (expiresAt.getTime() - now.getTime() < buffer) {
+    // Token needs refresh
+    const refreshResult = await fetch("https://oauth.bitrix.info/oauth/token/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: credentials.client_id,
+        client_secret: credentials.client_secret,
+        refresh_token: credentials.refresh_token,
+      }),
+    });
+    
+    if (refreshResult.ok) {
+      const tokens = await refreshResult.json();
+      const newExpiresAt = new Date(Date.now() + (tokens.expires_in - 60) * 1000).toISOString();
+      
+      await service.from("bitrix_credentials").update({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token || credentials.refresh_token,
+        expires_at: newExpiresAt,
+        updated_at: new Date().toISOString()
+      }).eq("id", credentials.id);
+      
+      return { ...credentials, access_token: tokens.access_token };
+    }
   }
-
-  return {
-    ...tokens,
-    portal_url: tenant.portal_url,
-    client_id: tenant.client_id,
-    client_secret: tenant.client_secret,
-  } as TokenRow;
+  
+  return credentials;
 }
 
-function isExpired(expires_at?: string | null) {
-  if (!expires_at) return false;
-  const exp = new Date(expires_at).getTime();
-  return Date.now() > (exp - 60_000);
-}
-
-async function refreshTokenIfNeeded(client: ReturnType<typeof createClient>, t: TokenRow) {
-  if (!isExpired(t.expires_at)) return t;
-
-  const url = `${t.portal_url.replace(/\/$/, "")}/oauth/token/`;
+async function callBitrixAPI(method: string, credentials: any, params: any = {}) {
+  const url = `${credentials.portal_url}/rest/${method}`;
   const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    client_id: t.client_id,
-    client_secret: t.client_secret,
-    refresh_token: t.refresh_token ?? "",
+    auth: credentials.access_token,
+    ...params
   });
-
-  const resp = await fetch(url, { method: "POST", body });
-  if (!resp.ok) throw new Error("Failed to refresh Bitrix token");
-  const tok = await resp.json();
-  const next = {
-    access_token: String(tok.access_token),
-    refresh_token: String(tok.refresh_token ?? t.refresh_token ?? ""),
-    expires_at: new Date(Date.now() + (tok.expires_in * 1000 || 3600_000)).toISOString(),
-  };
-
-  const { error } = await client
-    .from("bitrix_tokens")
-    .update(next)
-    .eq("id", t.id);
-  if (error) throw new Error("Failed to persist refreshed token");
-
-  return { ...t, ...next };
-}
-
-async function callBitrix(method: string, params: Json, portalUrl: string, accessToken: string) {
-  const url = `${portalUrl.replace(/\/$/, "")}/rest/${method}.json`;
-  const body = new URLSearchParams();
-  body.set("auth", accessToken);
-  for (const [k, v] of Object.entries(params || {})) {
-    body.set(k, typeof v === "string" ? v : JSON.stringify(v));
-  }
-  const res = await fetch(url, { method: "POST", body });
-  const json = await res.json();
-  if (!res.ok || json.error) {
-    throw new Error(`Bitrix error: ${json.error_description || json.error || res.status}`);
-  }
-  return json.result ?? json;
-}
-
-// Resolve line_id via open_channel_bindings (tenantId + instanceId) com fallback para lineId passado
-async function resolveLineId(client: ReturnType<typeof createClient>, tenantId?: string, instanceId?: string, fallbackLineId?: string) {
-  if (fallbackLineId && String(fallbackLineId).trim()) return String(fallbackLineId);
-  if (!tenantId || !instanceId) return null;
-
-  const { data, error } = await client
-    .from("open_channel_bindings")
-    .select("line_id")
-    .eq("tenant_id", tenantId)
-    .eq("instance_id", instanceId)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.warn("[bitrix-openlines] resolveLineId error:", error.message);
-    return null;
-  }
-  return data?.line_id || null;
-}
-
-async function olEnsureSession(client: ReturnType<typeof createClient>, tenantId: string, lineId: string): Promise<{ chatId: string }> {
-  const t0 = await getTenantTokens(client, tenantId);
-  const t1 = await refreshTokenIfNeeded(client, t0);
-
-  const r = await callBitrix("imopenlines.session.start", { MODE: "text", LINE_ID: lineId ?? "" }, t1.portal_url, t1.access_token);
-  const chatId = String(r.CHAT_ID ?? r.chat_id ?? r.chatId);
-  if (!chatId) throw new Error("CHAT_ID not returned by imopenlines.session.start");
-  return { chatId };
-}
-
-async function olAnswerSession(client: ReturnType<typeof createClient>, tenantId: string, chatId: string) {
-  const t0 = await getTenantTokens(client, tenantId);
-  const t1 = await refreshTokenIfNeeded(client, t0);
-  try {
-    await callBitrix("imopenlines.session.answer", { CHAT_ID: chatId }, t1.portal_url, t1.access_token);
-  } catch (_e) {
-    // tolerante: se não existir, ignorar
-  }
-  return { chatId };
-}
-
-async function olCloseSession(client: ReturnType<typeof createClient>, tenantId: string, chatId: string) {
-  const t0 = await getTenantTokens(client, tenantId);
-  const t1 = await refreshTokenIfNeeded(client, t0);
-  await callBitrix("imopenlines.session.close", { CHAT_ID: chatId }, t1.portal_url, t1.access_token);
-  return { chatId, closed: true };
-}
-
-// Simplificado para não depender do schema local de conversations; garante chat via Open Lines e retorna chatId.
-async function ensureChatForConversation(
-  client: ReturnType<typeof createClient>,
-  input: EnsureChatInput
-): Promise<{ chatId: string }> {
-  if (input.bitrixChatId) return { chatId: String(input.bitrixChatId) };
-
-  const effectiveLineId = await resolveLineId(client, input.tenantId, input.instanceId, input.lineId);
-  if (!effectiveLineId) {
-    throw new Error("Line ID not resolved: provide lineId or create binding for instanceId");
-  }
-  const r = await olEnsureSession(client, input.tenantId, effectiveLineId);
-  return { chatId: r.chatId };
-}
-
-async function olSendMessage(client: ReturnType<typeof createClient>, tenantId: string, chatId: string, text?: string, fileUrl?: string, replyToMid?: number) {
-  const t0 = await getTenantTokens(client, tenantId);
-  const t1 = await refreshTokenIfNeeded(client, t0);
-
-  if (text && text.trim()) {
-    const res = await callBitrix("im.message.add", {
-      CHAT_ID: Number(chatId),
-      MESSAGE: text,
-      ATTACH: null,
-      REPLY_TO: replyToMid ? Number(replyToMid) : undefined,
-    }, t1.portal_url, t1.access_token);
-    return { chatId, mid: res, type: "text" };
-  }
-
-  if (fileUrl) {
-    const res = await callBitrix("im.message.add", {
-      CHAT_ID: Number(chatId),
-      MESSAGE: fileUrl,
-    }, t1.portal_url, t1.access_token);
-    return { chatId, mid: res, type: "file-link" };
-  }
-
-  throw new Error("Nothing to send");
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  
+  const data = await response.json();
+  return { ok: response.ok, data };
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: cors });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  const service = await getServiceClient();
+  if (req.method === "GET") {
+    return new Response(
+      JSON.stringify({ ok: true, message: "bitrix-openlines alive" }),
+      { headers: corsHeaders }
+    );
+  }
+
+  const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
-    const { action, payload } = await req.json().catch(() => ({ action: "", payload: {} as any }));
+    const body = await req.json();
+    const { action } = body;
 
-    console.log(`[bitrix-openlines] action: ${action}`, payload);
-    await logWebhook(service, action, payload, true);
-
-    switch (action) {
-      case "openlines.ensureSession": {
-        const p = payload as StartSessionInput;
-        if (!p?.tenantId) return ko("tenantId is required");
-        // resolve lineId via binding (tenantId + instanceId) com fallback para p.lineId
-        const effectiveLineId = await resolveLineId(service, p.tenantId, p.instanceId, p.lineId);
-        if (!effectiveLineId) return ko("Line ID not resolved: provide lineId or create binding for instanceId");
-        const r = await olEnsureSession(service, p.tenantId, effectiveLineId);
-        return ok(r);
+    if (action === "list_lines") {
+      const credentials = await getBitrixTokens(service);
+      const refreshedCredentials = await refreshTokenIfNeeded(service, credentials);
+      
+      const result = await callBitrixAPI("imopenlines.config.list.get", refreshedCredentials);
+      
+      if (result.ok && result.data?.result) {
+        const lines = Object.values(result.data.result).map((line: any) => ({
+          id: line.ID || line.id,
+          name: line.LINE_NAME || line.name || `Line ${line.ID || line.id}`,
+          active: line.ACTIVE === "Y" || line.active === true
+        }));
+        
+        return new Response(
+          JSON.stringify({ ok: true, lines }),
+          { headers: corsHeaders }
+        );
       }
-      case "openlines.answer": {
-        const { tenantId, bitrixChatId } = payload as { tenantId: string; bitrixChatId: string };
-        if (!tenantId || !bitrixChatId) return ko("tenantId and bitrixChatId are required");
-        const r = await olAnswerSession(service, tenantId, bitrixChatId);
-        return ok(r);
-      }
-      case "openlines.close": {
-        const p = payload as CloseSessionInput;
-        if (!p?.tenantId || !p?.bitrixChatId) return ko("tenantId and bitrixChatId required");
-        const r = await olCloseSession(service, p.tenantId, p.bitrixChatId);
-        return ok(r);
-      }
-      case "openlines.sendMessage": {
-        const p = payload as SendMessageInput;
-        if (!p?.tenantId) return ko("tenantId required");
-        let chatId = p.bitrixChatId || null;
-
-        if (!chatId) {
-          if (!p.ensure) return ko("Missing bitrixChatId and ensure{}");
-          // ensure.chat: resolver lineId via binding se necessário
-          const r = await ensureChatForConversation(service, p.ensure);
-          chatId = r.chatId;
-        }
-
-        const r = await olSendMessage(service, p.tenantId, String(chatId), p.text, p.fileUrl, p.replyToMid);
-        return ok(r);
-      }
-      default:
-        return ko(`Unknown action: ${action}`, 404);
+      
+      return new Response(
+        JSON.stringify({ ok: false, error: "Failed to fetch lines" }),
+        { status: 500, headers: corsHeaders }
+      );
     }
-  } catch (e: any) {
-    console.error("[bitrix-openlines] error:", e?.message || e);
-    await logWebhook(await getServiceClient(), "error", { error: e?.message || String(e) }, false);
-    return ko(e?.message || "Internal error", 500);
+
+    if (action === "send_message_to_line") {
+      const { chatId, text, fileUrl } = body;
+      
+      const credentials = await getBitrixTokens(service);
+      const refreshedCredentials = await refreshTokenIfNeeded(service, credentials);
+      
+      const params: any = {
+        chat_id: chatId,
+        message: text || ""
+      };
+      
+      if (fileUrl) {
+        params.file = fileUrl;
+      }
+      
+      const result = await callBitrixAPI("imopenlines.message.add", refreshedCredentials, params);
+      
+      return new Response(
+        JSON.stringify({ 
+          ok: result.ok, 
+          data: result.data,
+          error: result.ok ? undefined : "Failed to send message"
+        }),
+        { headers: corsHeaders }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({ ok: false, error: "Unknown action" }),
+      { status: 400, headers: corsHeaders }
+    );
+
+  } catch (error: any) {
+    console.error("[bitrix-openlines] Error:", error);
+    return new Response(
+      JSON.stringify({ ok: false, error: error.message }),
+      { status: 500, headers: corsHeaders }
+    );
   }
 });

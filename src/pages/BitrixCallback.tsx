@@ -11,75 +11,64 @@ export default function BitrixCallback() {
       const domain = params.get("domain");
       const stored = localStorage.getItem("bx_oauth_state");
 
+      console.log("[BitrixCallback] Processing callback:", { code: !!code, state, domain, stored });
+
       let ok = false;
       let reason = "";
 
-      console.log("[BitrixCallback] Processing OAuth callback", {
-        hasCode: !!code,
-        hasState: !!state,
-        hasDomain: !!domain,
-        stateMatch: state === stored
-      });
-
       try {
         if (!code) {
-          reason = "missing_authorization_code";
+          reason = "missing_code";
         } else if (!state || state !== stored) {
-          reason = "invalid_state_parameter";
+          reason = "invalid_state";
         } else {
-          console.log("[BitrixCallback] Calling bitrix-oauth-exchange...");
+          console.log("[BitrixCallback] Calling oauth exchange...");
           
           const { data, error } = await supabase.functions.invoke("bitrix-oauth-exchange", {
             body: { code, state, domain },
           });
-
-          console.log("[BitrixCallback] Exchange response:", { data, error });
-
+          
+          console.log("[BitrixCallback] Exchange result:", { data, error });
+          
           if (error) {
-            reason = `exchange_error: ${error.message || 'Unknown error'}`;
-          } else if (!data) {
-            reason = "no_response_data";
-          } else if (!data.ok) {
-            reason = `exchange_failed: ${data.error || 'Unknown error'}`;
+            reason = error.message || "exchange_failed";
+          } else if (!data?.ok) {
+            reason = data?.error || "exchange_not_ok";
           } else {
             ok = true;
-            console.log("[BitrixCallback] OAuth exchange successful:", data.portal_url);
+            console.log("[BitrixCallback] OAuth exchange successful");
           }
         }
       } catch (e: any) {
-        console.error("[BitrixCallback] Exception during OAuth:", e);
-        reason = `exception: ${e?.message || 'Unknown exception'}`;
-      }
-
-      try {
-        // Limpar state após uso
+        console.error("[BitrixCallback] Error:", e);
+        reason = e?.message || "unknown_error";
+      } finally {
+        // Clean up state
         localStorage.removeItem("bx_oauth_state");
         
-        // Enviar resultado para janela pai
-        const message = { source: "bitrix-oauth", ok, reason };
-        console.log("[BitrixCallback] Sending message to opener:", message);
+        console.log("[BitrixCallback] Sending result to opener:", { ok, reason });
         
-        if (window.opener) {
-          window.opener.postMessage(message, window.location.origin);
-        } else {
-          console.warn("[BitrixCallback] No opener window found");
+        // Send result to opener
+        window.opener?.postMessage(
+          { source: "bitrix-oauth", ok, reason }, 
+          window.location.origin
+        );
+        
+        // Close popup
+        try {
+          window.close();
+        } catch (e) {
+          console.warn("[BitrixCallback] Could not close window:", e);
         }
-        
-        // Fechar popup
-        window.close();
-      } catch (e) {
-        console.error("[BitrixCallback] Error in cleanup:", e);
-        // Tentar fechar mesmo assim
-        try { window.close(); } catch {}
       }
     })();
   }, []);
 
   return (
     <div className="flex items-center justify-center min-h-screen">
-      <div className="text-center space-y-4">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-        <p className="text-sm text-muted-foreground">Processando autenticação...</p>
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+        <p className="mt-4 text-muted-foreground">Processando autenticação Bitrix24...</p>
       </div>
     </div>
   );
