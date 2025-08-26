@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,26 +12,22 @@ import {
   Info
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import ConnectBitrixButton from "./bitrix/ConnectBitrixButton";
+import BitrixConnectionManager from "./BitrixConnectionManager";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useBitrixTokenRefresh } from "@/hooks/useBitrixTokenRefresh";
 
 const ConfigurationPanel = () => {
   const [loading, setLoading] = useState(false);
-  const [portalUrl, setPortalUrl] = useState("");
   const [evolutionConfig, setEvolutionConfig] = useState({
     baseUrl: "",
     apiKey: "",
     instanceName: ""
   });
   const { toast } = useToast();
-
-  useBitrixTokenRefresh();
 
   const handleSaveEvolution = async () => {
     if (!evolutionConfig.baseUrl || !evolutionConfig.apiKey) {
@@ -151,41 +148,8 @@ const ConfigurationPanel = () => {
         </CardContent>
       </Card>
 
-      {/* Bitrix24 Configuration */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Settings className="h-5 w-5" />
-            Bitrix24 OAuth
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                    <Info className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-sm">
-                  <div className="space-y-2 text-sm">
-                    <p><strong>🔧 Configurações necessárias no Bitrix24:</strong></p>
-                    <p><strong>URL de Redirecionamento:</strong><br/>
-                    https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-oauth-callback</p>
-                    <p><strong>Escopos necessários:</strong><br/>
-                    imopenlines, imconnector, im, placement, crm, user, event, event_bind</p>
-                    <p><strong>🔄 Renovação Automática:</strong></p>
-                    <p>O sistema renova automaticamente os tokens OAuth a cada 5 minutos, evitando desconexões.</p>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ConnectBitrixButton 
-            portalUrl={portalUrl}
-            onPortalUrlChange={setPortalUrl}
-          />
-        </CardContent>
-      </Card>
+      {/* Bitrix24 Connection Manager */}
+      <BitrixConnectionManager />
 
       {/* Important Notes */}
       <Card>
@@ -196,7 +160,7 @@ const ConfigurationPanel = () => {
               <p className="font-medium">Importante:</p>
               <ul className="space-y-1 text-muted-foreground">
                 <li>• Configure primeiro a Evolution API e teste a conexão</li>
-                <li>• Depois configure o OAuth do Bitrix24 com os escopos corretos</li>
+                <li>• A conexão Bitrix24 é automática quando instalado no portal</li>
                 <li>• Cada canal do Bitrix criará automaticamente sua instância Evolution</li>
                 <li>• Os tokens OAuth são renovados automaticamente a cada 5 minutos</li>
                 <li>• Use o Gerenciador de Open Channels para configurar a integração</li>
