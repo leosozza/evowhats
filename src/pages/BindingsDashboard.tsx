@@ -104,9 +104,10 @@ export default function BindingsDashboard() {
     }
     
     try {
-      const line = { ID: lineId, NAME: `Line ${lineId}` };
-      await startSession(line);
-      startPolling(line);
+      // Map to hook expected format
+      const mappedLine = { id: lineId, name: `Line ${lineId}` };
+      await startSession(mappedLine);
+      startPolling(mappedLine);
       toast({ title: "Sessão iniciada com sucesso!" });
     } catch (error: any) {
       toast({ 
@@ -121,8 +122,9 @@ export default function BindingsDashboard() {
     if (!lineId) return;
     
     try {
-      const line = { ID: lineId, NAME: `Line ${lineId}` };
-      await refreshStatus(line);
+      // Map to hook expected format
+      const mappedLine = { id: lineId, name: `Line ${lineId}` };
+      await refreshStatus(mappedLine);
       toast({ title: "Status atualizado!" });
     } catch (error: any) {
       toast({ 
@@ -238,8 +240,8 @@ export default function BindingsDashboard() {
                         >
                           <option value="">Vincular à linha Open Lines...</option>
                           {lines.map((line) => (
-                            <option key={line.id} value={line.id}>
-                              {line.name} (ID: {line.id})
+                            <option key={line.ID} value={line.ID}>
+                              {line.NAME} (ID: {line.ID})
                             </option>
                           ))}
                         </select>
@@ -333,16 +335,16 @@ export default function BindingsDashboard() {
               </div>
             ) : (
               lines.map((line) => {
-                const currentStatus = statusByLine[line.id] || "unknown";
-                const hasQr = !!qrByLine[line.id];
+                const currentStatus = statusByLine[line.ID] || "unknown";
+                const hasQr = !!qrByLine[line.ID];
                 
                 return (
-                  <Card key={line.id} className="p-3">
+                  <Card key={line.ID} className="p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="font-medium">{line.name}</div>
+                        <div className="font-medium">{line.NAME}</div>
                         <div className="text-sm text-muted-foreground">
-                          ID: {line.id} | Status: {currentStatus}
+                          ID: {line.ID} | Status: {currentStatus}
                         </div>
                         {hasQr && (
                           <div className="text-xs text-orange-600 mt-1">

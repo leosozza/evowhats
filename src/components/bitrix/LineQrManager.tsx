@@ -25,8 +25,10 @@ export default function LineQrManager({ lines }: { lines: Line[] }) {
   const handleShowQr = async (line: Line) => {
     setLastActionLine(line.ID);
     try {
-      await startSession(line);
-      startPolling(line);
+      // Map Bitrix line format to hook expected format
+      const mappedLine = { id: line.ID, name: line.NAME };
+      await startSession(mappedLine);
+      startPolling(mappedLine);
       toast({
         title: "Sessão iniciada",
         description: `Iniciando conexão para a linha ${line.NAME}. QR será exibido se necessário.`,
@@ -44,7 +46,9 @@ export default function LineQrManager({ lines }: { lines: Line[] }) {
   const handleRefreshStatus = async (line: Line) => {
     setLastActionLine(line.ID);
     try {
-      await refreshStatus(line);
+      // Map Bitrix line format to hook expected format
+      const mappedLine = { id: line.ID, name: line.NAME };
+      await refreshStatus(mappedLine);
       toast({
         title: "Status atualizado",
         description: `Status da linha ${line.NAME} foi verificado.`,
