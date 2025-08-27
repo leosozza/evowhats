@@ -2,7 +2,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { evolutionInstanceManager } from "@/services/evolutionInstances";
 
 export interface RealTimeMessage {
   id: string;
@@ -87,7 +86,32 @@ export function useEvolutionRealTime() {
     }
   }, [queryClient]);
 
-  // Process custom event from EvolutionInstanceManager
+  // Load connected instances from Evolution API
+  const loadConnectedInstances = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "list_instances" }
+      });
+
+      if (error) throw error;
+      if (!data?.ok) return;
+
+      const instances = data.instances || [];
+      const connected = instances
+        .filter((inst: any) => {
+          const status = inst.instance?.state || inst.state || 'disconnected';
+          return status.toLowerCase() === 'open';
+        })
+        .map((inst: any) => inst.instanceName || inst.instance?.instanceName || inst.name);
+      
+      setConnectedInstances(connected);
+    } catch (error) {
+      console.error('Error loading connected instances:', error);
+      setConnectedInstances([]);
+    }
+  }, []);
+
+  // Process custom event from EvolutionInstanceManager or WebSocket
   useEffect(() => {
     const handleMessagesUpsert = (event: CustomEvent) => {
       const { instanceName, payload } = event.detail;
@@ -130,18 +154,12 @@ export function useEvolutionRealTime() {
     };
   }, [saveMessage]);
 
-  // Subscribe to instance updates
+  // Load connected instances on mount and periodically
   useEffect(() => {
-    const unsubscribe = evolutionInstanceManager.subscribe((instances) => {
-      const connected = instances
-        .filter(i => i.status === 'connected')
-        .map(i => i.instanceName);
-      
-      setConnectedInstances(connected);
-    });
-
-    return unsubscribe;
-  }, []);
+    loadConnectedInstances();
+    const interval = setInterval(loadConnectedInstances, 15000); // Every 15 seconds
+    return () => clearInterval(interval);
+  }, [loadConnectedInstances]);
 
   // Get recent messages for display
   const getRecentMessages = useCallback((limit: number = 10) => {
@@ -162,11 +180,11 @@ export function useEvolutionRealTime() {
     message: string
   ): Promise<boolean> => {
     try {
-      const response = await supabase.functions.invoke('evolution-connector', {
+      const response = await supabase.functions.invoke('evolution-connector-v2', {
         body: {
-          action: 'send_text',
-          instanceName,
-          number: toNumber,
+          action: 'test_send',
+          lineId: instanceName.replace('evo_line_', ''),
+          to: toNumber,
           text: message
         }
       });
@@ -184,5 +202,6 @@ export function useEvolutionRealTime() {
     isConnecting,
     getMessagesByInstance,
     sendMessage,
+    loadConnectedInstances,
   };
 }

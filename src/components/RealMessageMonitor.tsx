@@ -5,15 +5,51 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, RefreshCw, Phone, Clock, CheckCircle, Smartphone } from "lucide-react";
 import { useEvolutionRealTime } from "@/hooks/useEvolutionRealTime";
-import { evolutionInstanceManager } from "@/services/evolutionInstances";
+import { supabase } from "@/integrations/supabase/client";
+
+interface EvolutionInstance {
+  id: string;
+  label: string;
+  status: string;
+  bound_line_id?: string | null;
+}
 
 const RealMessageMonitor = () => {
   const { connectedInstances, messages } = useEvolutionRealTime();
-  const [instances, setInstances] = useState<any[]>([]);
+  const [instances, setInstances] = useState<EvolutionInstance[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const loadInstances = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "list_instances" }
+      });
+
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || "Failed to load instances");
+
+      const instancesData = data.instances || [];
+      setInstances(instancesData.map((inst: any) => ({
+        id: inst.instanceName || inst.instance?.instanceName || inst.name,
+        label: inst.instanceName || inst.instance?.instanceName || inst.name,
+        status: inst.instance?.state || inst.state || 'disconnected',
+        bound_line_id: null
+      })));
+
+    } catch (error: any) {
+      console.error("Error loading instances:", error);
+      setInstances([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const unsubscribe = evolutionInstanceManager.subscribe(setInstances);
-    return unsubscribe;
+    loadInstances();
+    // Recarregar a cada 10 segundos
+    const interval = setInterval(loadInstances, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const formatTime = (timestamp: string) => {
@@ -51,6 +87,20 @@ const RealMessageMonitor = () => {
     }
   };
 
+  const getInstanceStatus = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'open':
+        return { label: 'Online', color: 'bg-green-500', variant: 'default' as const };
+      case 'connecting':
+        return { label: 'Conectando', color: 'bg-yellow-500 animate-pulse', variant: 'secondary' as const };
+      case 'qr':
+      case 'qr_ready':
+        return { label: 'Aguardando QR', color: 'bg-blue-500 animate-pulse', variant: 'outline' as const };
+      default:
+        return { label: 'Offline', color: 'bg-gray-400', variant: 'destructive' as const };
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -60,10 +110,14 @@ const RealMessageMonitor = () => {
             Monitor de Mensagens em Tempo Real
           </div>
           <div className="flex items-center gap-2">
-            {connectedInstances.length > 0 ? (
+            <Button onClick={loadInstances} size="sm" variant="outline" disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </Button>
+            {instances.filter(i => i.status === 'open').length > 0 ? (
               <Badge className="flex items-center gap-1">
                 <CheckCircle className="h-3 w-3" />
-                {connectedInstances.length} conectada(s)
+                {instances.filter(i => i.status === 'open').length} conectada(s)
               </Badge>
             ) : (
               <Badge variant="secondary">Nenhuma instância conectada</Badge>
@@ -75,28 +129,34 @@ const RealMessageMonitor = () => {
         {/* Connection Status */}
         <div className="mb-6">
           <h3 className="font-medium mb-3">Status das Instâncias</h3>
-          {instances.length === 0 ? (
+          {loading ? (
+            <div className="text-center py-4 text-muted-foreground">
+              <RefreshCw className="h-6 w-6 mx-auto mb-2 animate-spin" />
+              <p className="text-sm">Carregando instâncias...</p>
+            </div>
+          ) : instances.length === 0 ? (
             <div className="text-center py-4 text-muted-foreground">
               <Smartphone className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Nenhuma instância criada</p>
+              <p className="text-sm">Nenhuma instância encontrada</p>
+              <p className="text-xs mt-1">Vá para "Instâncias Evolution" para criar uma nova conexão</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {instances.map((instance) => (
-                <div key={instance.instanceName} className="flex items-center gap-2 p-2 border rounded">
-                  <div className={`w-2 h-2 rounded-full ${
-                    instance.status === 'connected' ? 'bg-green-500' : 
-                    instance.status === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-                    'bg-gray-400'
-                  }`} />
-                  <span className="text-sm font-medium">{instance.instanceName}</span>
-                  <Badge variant="outline" className="text-xs ml-auto">
-                    {instance.status === 'connected' ? 'Online' :
-                     instance.status === 'connecting' ? 'Conectando' :
-                     instance.status === 'qr_ready' ? 'Aguardando QR' : 'Offline'}
-                  </Badge>
-                </div>
-              ))}
+              {instances.map((instance) => {
+                const statusInfo = getInstanceStatus(instance.status);
+                return (
+                  <div key={instance.id} className="flex items-center gap-2 p-3 border rounded-lg">
+                    <div className={`w-3 h-3 rounded-full ${statusInfo.color}`} />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium truncate block">{instance.label}</span>
+                      <span className="text-xs text-muted-foreground">ID: {instance.id}</span>
+                    </div>
+                    <Badge variant={statusInfo.variant} className="text-xs">
+                      {statusInfo.label}
+                    </Badge>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -109,7 +169,7 @@ const RealMessageMonitor = () => {
               <MessageSquare className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="font-medium">Nenhuma mensagem ainda</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                {connectedInstances.length > 0 
+                {instances.filter(i => i.status === 'open').length > 0 
                   ? "As mensagens aparecerão aqui em tempo real quando chegarem."
                   : "Conecte uma instância WhatsApp para receber mensagens."
                 }
