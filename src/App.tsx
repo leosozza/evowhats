@@ -1,45 +1,24 @@
-
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
-import { useBitrixTokenRefresh } from "@/hooks/useBitrixTokenRefresh";
-import Index from "@/pages/Index";
-import ContactCenterLanding from "@/pages/ContactCenterLanding";
-import ConnectorSetup from "@/pages/ConnectorSetup";
-import BitrixCallback from "@/pages/BitrixCallback";
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import Dashboard from "@/components/Dashboard";
+import Settings from "@/pages/Settings";
+import BitrixIntegration from "@/pages/BitrixIntegration";
 import BindingsDashboard from "@/pages/BindingsDashboard";
 import EvolutionInstances from "@/pages/EvolutionInstances";
-import NotFound from "@/pages/NotFound";
 
-const queryClient = new QueryClient();
-
-const App = () => {
-  const { session } = useSupabaseAuth();
-  useBitrixTokenRefresh();
-
+function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/contact-center" element={<ContactCenterLanding />} />
-            <Route path="/connector" element={<ConnectorSetup />} />
-            <Route path="/bitrix-callback" element={<BitrixCallback />} />
-            <Route path="/bitrix/callback" element={<BitrixCallback />} />
-            <Route path="/bindings" element={<BindingsDashboard />} />
-            <Route path="/evolution/instances" element={<EvolutionInstances />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <Router>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/bitrix" element={<BitrixIntegration />} />
+          <Route path="/bindings" element={<BindingsDashboard />} />
+          <Route path="/evolution/instances" element={<EvolutionInstances />} />
+        </Routes>
+      </div>
+    </Router>
   );
-};
+}
 
 export default App;

@@ -1,130 +1,147 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Link } from "react-router-dom";
-import {
-  Activity,
-  Eye,
-  Link2,
-  Settings,
-  Zap,
-} from "lucide-react";
-import { useDashboardStats } from "@/hooks/useDashboardStats";
-import { useBitrixConnection } from "@/hooks/useBitrixConnection";
+import { Activity } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+
+interface APIStatus {
+  evolutionApi: boolean;
+  bitrixApi: boolean;
+}
 
 const Dashboard = () => {
-  const { stats, loading } = useDashboardStats();
-  const { bitrixConnectionStatus } = useBitrixConnection();
+  const { toast } = useToast();
+  const [apiStatus, setApiStatus] = useState<APIStatus>({
+    evolutionApi: false,
+    bitrixApi: false,
+  });
+
+  const checkApiStatus = async () => {
+    try {
+      const evolutionCheck = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "test_api" },
+      });
+      const bitrixCheck = await supabase.functions.invoke("bitrix-openlines", {
+        body: { action: "test_api" },
+      });
+
+      setApiStatus({
+        evolutionApi: evolutionCheck.data?.ok === true,
+        bitrixApi: bitrixCheck.data?.ok === true,
+      });
+
+      if (evolutionCheck.data?.ok === true) {
+        toast({
+          title: "✅ API Evolution",
+          description: "API Evolution está funcional",
+        });
+      } else {
+        toast({
+          title: "❌ API Evolution",
+          description: "API Evolution não está funcional",
+          variant: "destructive",
+        });
+      }
+
+      if (bitrixCheck.data?.ok === true) {
+        toast({
+          title: "✅ API Bitrix",
+          description: "API Bitrix está funcional",
+        });
+      } else {
+        toast({
+          title: "❌ API Bitrix",
+          description: "API Bitrix não está funcional",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      console.error("Error checking API status:", error);
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  useEffect(() => {
+    checkApiStatus();
+  }, []);
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {/* Monitor em Tempo Real */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Monitor em Tempo Real</CardTitle>
-          <Activity className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.activeConnections}</div>
-          <p className="text-xs text-muted-foreground">
-            conexões ativas
-          </p>
-          <Button className="w-full mt-2" asChild>
-            <Link to="/contact-center">
-              <Eye className="mr-2 h-4 w-4" />
-              Ver Monitor
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto p-6">
+        <h1 className="text-3xl font-bold mb-4">Dashboard</h1>
+        <p className="text-gray-600 mb-8">
+          Visão geral das integrações e APIs
+        </p>
 
-      {/* Configuração */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Configuração</CardTitle>
-          <Settings className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{bitrixConnectionStatus}</div>
-          <p className="text-xs text-muted-foreground">
-            status da integração
-          </p>
-          <Button className="w-full mt-2" asChild>
-            <Link to="/connector">
-              <Settings className="mr-2 h-4 w-4" />
-              Configurar
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
+        {/* Navigation cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => window.location.href = '/bindings'}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Bindings</CardTitle>
+              <Activity className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground">
+                Gerenciar ligações entre canais e instâncias
+              </p>
+            </CardContent>
+          </Card>
+          
+          <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => window.location.href = '/evolution/instances'}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Instâncias Evolution</CardTitle>
+              <Activity className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground">
+                Gerenciar conexões Evolution API
+              </p>
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* Evolution API */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Evolution API</CardTitle>
-          <Zap className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.evolutionInstances}</div>
-          <p className="text-xs text-muted-foreground">
-            instâncias ativas
-          </p>
-          <Button className="w-full mt-2" asChild>
-            <Link to="/evolution/instances">
-              <Zap className="mr-2 h-4 w-4" />
-              Gerenciar Instâncias
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
+        {/* API Status Section */}
+        <section className="mb-8">
+          <h2 className="text-2xl font-semibold mb-4">Status da API</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>API Evolution</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-500">
+                  Status:{" "}
+                  {apiStatus.evolutionApi ? (
+                    <span className="text-green-500">Funcional</span>
+                  ) : (
+                    <span className="text-red-500">Não Funcional</span>
+                  )}
+                </p>
+              </CardContent>
+            </Card>
 
-      {/* Vínculos */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Vínculos</CardTitle>
-          <Link2 className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.bindings}</div>
-          <p className="text-xs text-muted-foreground">
-            canais vinculados
-          </p>
-          <Button className="w-full mt-2" asChild>
-            <Link to="/bindings">
-              <Link2 className="mr-2 h-4 w-4" />
-              Ver Vínculos
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Leads Importados */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Leads</CardTitle>
-          <Activity className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.importedLeads}</div>
-          <p className="text-xs text-muted-foreground">
-            leads importados
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Mensagens Enviadas */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Mensagens</CardTitle>
-          <Activity className="h-4 w-4 text-muted-foreground" />
-        </CardHeader>
-        <CardContent>
-          <div className="text-2xl font-bold">{stats.sentMessages}</div>
-          <p className="text-xs text-muted-foreground">
-            mensagens enviadas (30d)
-          </p>
-        </CardContent>
-      </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>API Bitrix</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-500">
+                  Status:{" "}
+                  {apiStatus.bitrixApi ? (
+                    <span className="text-green-500">Funcional</span>
+                  ) : (
+                    <span className="text-red-500">Não Funcional</span>
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      </div>
     </div>
   );
 };
