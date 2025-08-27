@@ -116,7 +116,7 @@ const BindingsDashboard = () => {
                       ) : statusByLine[line.id] === "error" ? (
                         <Badge variant="destructive">Erro</Badge>
                       ) : (
-                        <Button variant="outline" size="xs" onClick={() => handleConnect(line)}>
+                        <Button variant="outline" size="sm" onClick={() => handleConnect(line)}>
                           Conectar
                         </Button>
                       )}
