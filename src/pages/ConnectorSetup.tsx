@@ -1,45 +1,60 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/use-toast";
-import { openBitrixPopup, getPortalFromIframe } from "@/utils/bitrixAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { openBitrixPopup, getPortalFromIframe } from "@/utils/bitrixAuth";
 
 export default function ConnectorSetup() {
-  const [portalUrl, setPortalUrl] = useState<string>(getPortalFromIframe() || "");
+  const [portalUrl, setPortalUrl] = useState(getPortalFromIframe() || "");
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<null | { ok: boolean; refreshed?: boolean }>(null);
 
-  async function handleReconnect() {
-    if (!portalUrl) {
-      toast({ title: "Informe o portal do Bitrix24", variant: "destructive" });
-      return;
+  async function refreshToken() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase.functions.invoke("bitrix-token-refresh", { body: {} });
+      if (error) throw error;
+      setStatus(data);
+    } catch (e: any) {
+      toast({ title: "Erro ao checar Bitrix", description: e?.message || String(e), variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    openBitrixPopup(async ({ ok, reason }) => {
-      if (ok) {
-        // Após callback concluir, peça um refresh do status no backend
-        await supabase.functions.invoke("bitrix-token-refresh", { body: {} }).catch(() => {});
-        toast({ title: "Bitrix conectado!" });
-      } else {
-        toast({ 
-          title: "Falha ao conectar Bitrix", 
-          description: reason || "Verifique o redirect e os logs", 
-          variant: "destructive" 
-        });
-      }
-    });
   }
 
+  useEffect(() => { refreshToken(); }, []);
+
   return (
-    <div className="space-y-3">
-      <div className="grid gap-2">
-        <label>URL do Portal Bitrix24</label>
-        <Input
-          placeholder="https://seudominio.bitrix24.com.br"
-          value={portalUrl}
-          onChange={(e) => setPortalUrl(e.target.value)}
-        />
+    <div className="space-y-4">
+      <div className="flex gap-2 items-end">
+        <div className="flex-1">
+          <label className="block text-sm">URL do Portal Bitrix24</label>
+          <Input value={portalUrl} onChange={(e) => setPortalUrl(e.target.value)} placeholder="https://seuportal.bitrix24.com.br" />
+        </div>
+        <Button
+          onClick={() =>
+            openBitrixPopup(async ({ ok, reason }) => {
+              if (ok) {
+                await refreshToken();
+                toast({ title: "Bitrix conectado!" });
+              } else {
+                toast({ title: "Falha ao conectar Bitrix", description: reason, variant: "destructive" });
+              }
+            })
+          }
+        >
+          Reconectar OAuth
+        </Button>
+        <Button variant="outline" onClick={refreshToken} disabled={loading}>
+          {loading ? "Verificando..." : "Checar status"}
+        </Button>
       </div>
-      <Button onClick={handleReconnect}>Reconectar OAuth</Button>
+
+      <div className="text-sm text-muted-foreground">
+        Status: {status ? (status.ok ? (status.refreshed ? "Token atualizado" : "Token válido") : "Desconectado") : "Carregando..."}
+      </div>
     </div>
   );
 }

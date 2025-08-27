@@ -4,6 +4,7 @@ import Settings from "@/pages/Settings";
 import BitrixIntegration from "@/pages/BitrixIntegration";
 import BindingsDashboard from "@/pages/BindingsDashboard";
 import EvolutionInstances from "@/pages/EvolutionInstances";
+import EvolutionInstanceDetail from "@/pages/EvolutionInstanceDetail";
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
           <Route path="/bitrix" element={<BitrixIntegration />} />
           <Route path="/bindings" element={<BindingsDashboard />} />
           <Route path="/evolution/instances" element={<EvolutionInstances />} />
+          <Route path="/evolution/instances/:instanceName" element={<EvolutionInstanceDetail />} />
         </Routes>
       </div>
     </Router>
