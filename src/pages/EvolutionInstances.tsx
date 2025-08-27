@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
-import { useLineEvolution, type Line } from "@/hooks/useLineEvolution";
+import { useLineEvolution } from "@/hooks/useLineEvolution";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   Activity, 
@@ -17,7 +17,8 @@ import {
   Zap,
   CheckCircle,
   AlertCircle,
-  XCircle
+  XCircle,
+  RefreshCw
 } from "lucide-react";
 
 interface EvolutionInstance {
@@ -63,13 +64,13 @@ const EvolutionInstances = () => {
 
       setInstances(data.instances || []);
       toast({
-        title: "✅ Instâncias carregadas",
+        title: "✅ API Evolution validada",
         description: `${data.instances?.length || 0} instância(s) encontrada(s)`,
       });
     } catch (error: any) {
       console.error("Error loading instances:", error);
       toast({
-        title: "❌ Erro ao carregar instâncias",
+        title: "❌ Erro ao validar API",
         description: error.message,
         variant: "destructive",
       });
@@ -87,9 +88,18 @@ const EvolutionInstances = () => {
       if (error) throw error;
       if (data?.ok && data?.lines) {
         setBitrixLines(data.lines);
+        toast({
+          title: "✅ Linhas Bitrix carregadas",
+          description: `${data.lines.length} linha(s) encontrada(s)`,
+        });
       }
     } catch (error: any) {
       console.error("Error loading Bitrix lines:", error);
+      toast({
+        title: "❌ Erro ao carregar linhas Bitrix",
+        description: error.message,
+        variant: "destructive",
+      });
     }
   };
 
@@ -104,8 +114,7 @@ const EvolutionInstances = () => {
     }
 
     try {
-      const line: Line = { id: newLineId.trim(), name: `Line ${newLineId}` };
-      await startSession(line);
+      await startSession(newLineId.trim());
       
       toast({
         title: "✅ Instância criada",
@@ -127,10 +136,9 @@ const EvolutionInstances = () => {
   const handleConnect = async (instanceId: string) => {
     try {
       const lineId = instances.find(i => i.id === instanceId)?.bound_line_id || instanceId.replace("evo_line_", "");
-      const line: Line = { id: lineId, name: `Line ${lineId}` };
       
-      await startSession(line);
-      startPolling(line);
+      await startSession(lineId);
+      startPolling(lineId);
       
       toast({
         title: "🔄 Conectando...",
@@ -225,7 +233,7 @@ const EvolutionInstances = () => {
       case "open":
         return <Badge variant="default" className="bg-green-500">Conectado</Badge>;
       case "connecting":
-        return <Badge variant="secondary">Conectando</Badge>;
+        return <Badge variant="secondary">Aguardando QR</Badge>;
       default:
         return <Badge variant="destructive">Desconectado</Badge>;
     }
@@ -239,7 +247,7 @@ const EvolutionInstances = () => {
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="text-center space-y-2">
-        <h1 className="text-3xl font-bold">Instâncias Evolution</h1>
+        <h1 className="text-3xl font-bold">Integração Evolution API</h1>
         <p className="text-muted-foreground">
           Gerencie conexões WhatsApp via Evolution API
         </p>
@@ -256,7 +264,14 @@ const EvolutionInstances = () => {
         <CardContent className="space-y-4">
           <div className="flex gap-4">
             <Button onClick={loadInstances} disabled={loading}>
-              {loading ? "Carregando..." : "Validar API"}
+              {loading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Validando...
+                </>
+              ) : (
+                "Validar API Evolution"
+              )}
             </Button>
             <Button onClick={loadBitrixLines} variant="outline">
               Carregar Linhas Bitrix
@@ -265,12 +280,12 @@ const EvolutionInstances = () => {
         </CardContent>
       </Card>
 
-      {/* Criar Nova Instância */}
+      {/* Gerenciar Sessões */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Zap className="h-5 w-5" />
-            Criar Instância
+            Gerenciar Sessões
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -337,7 +352,7 @@ const EvolutionInstances = () => {
 
                   {/* Bind com Open Lines */}
                   <div className="space-y-2">
-                    <Label>Vincular Linha</Label>
+                    <Label>Vincular Linha Bitrix</Label>
                     <div className="flex gap-2">
                       <Select
                         value={selectedLineForBind[instance.id] || instance.bound_line_id || ""}
@@ -365,9 +380,9 @@ const EvolutionInstances = () => {
                       </Button>
                     </div>
                     {instance.bound_line_id && (
-                      <p className="text-xs text-muted-foreground">
-                        Vinculado à linha: {instance.bound_line_id}
-                      </p>
+                      <Badge variant="outline" className="text-xs">
+                        Vinculado: {instance.bound_line_id}
+                      </Badge>
                     )}
                   </div>
 

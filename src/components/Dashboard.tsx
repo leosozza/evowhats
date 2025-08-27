@@ -1,101 +1,130 @@
-
-import { useState } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import ConnectionStatus from "./ConnectionStatus";
-import ConfigurationPanel from "./ConfigurationPanel";
-import MessageMonitor from "./MessageMonitor";
-import RealMessageMonitor from "./RealMessageMonitor";
-import OpenChannelsManager from "./bitrix/OpenChannelsManager";
-import { 
-  Activity, 
-  Settings, 
-  MessageSquare,
+import { Button } from "@/components/ui/button";
+import { Link } from "react-router-dom";
+import {
+  Activity,
+  Eye,
+  Link2,
+  Settings,
   Zap,
-  Radio,
-  Bot
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useDashboardStats } from "@/hooks/useDashboardStats";
+import { useBitrixConnection } from "@/hooks/useBitrixConnection";
 
 const Dashboard = () => {
-  const navigate = useNavigate();
+  const { stats, loading } = useDashboardStats();
+  const { bitrixConnectionStatus } = useBitrixConnection();
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="text-center space-y-2">
-        <h1 className="text-3xl font-bold">EvoWhats Dashboard</h1>
-        <p className="text-muted-foreground">
-          Integração Evolution API + Bitrix24 Open Channels
-        </p>
-      </div>
-
-      {/* Quick Actions */}
+    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      {/* Monitor em Tempo Real */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5" />
-            Ações Rápidas
-          </CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Monitor em Tempo Real</CardTitle>
+          <Activity className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="flex gap-4">
-            <Button onClick={() => navigate("/evolution/instances")} className="flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              Instâncias Evolution
-            </Button>
-            <Button onClick={() => navigate("/bindings")} variant="outline" className="flex items-center gap-2">
-              <Activity className="h-4 w-4" />
-              Gerenciar Bindings
-            </Button>
-          </div>
+          <div className="text-2xl font-bold">{stats.activeConnections}</div>
+          <p className="text-xs text-muted-foreground">
+            conexões ativas
+          </p>
+          <Button className="w-full mt-2" asChild>
+            <Link to="/contact-center">
+              <Eye className="mr-2 h-4 w-4" />
+              Ver Monitor
+            </Link>
+          </Button>
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="connections" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="connections" className="flex items-center gap-2">
-            <Activity className="h-4 w-4" />
-            Conexões
-          </TabsTrigger>
-          <TabsTrigger value="openlines" className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4" />
-            Open Channels
-          </TabsTrigger>
-          <TabsTrigger value="messages" className="flex items-center gap-2">
-            <Zap className="h-4 w-4" />
-            Mensagens
-          </TabsTrigger>
-          <TabsTrigger value="real-messages" className="flex items-center gap-2">
-            <Radio className="h-4 w-4" />
-            Monitor Real
-          </TabsTrigger>
-          <TabsTrigger value="settings" className="flex items-center gap-2">
-            <Settings className="h-4 w-4" />
-            Configurações
-          </TabsTrigger>
-        </TabsList>
+      {/* Configuração */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Configuração</CardTitle>
+          <Settings className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{bitrixConnectionStatus}</div>
+          <p className="text-xs text-muted-foreground">
+            status da integração
+          </p>
+          <Button className="w-full mt-2" asChild>
+            <Link to="/connector">
+              <Settings className="mr-2 h-4 w-4" />
+              Configurar
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
-        <TabsContent value="connections" className="mt-6">
-          <ConnectionStatus />
-        </TabsContent>
+      {/* Evolution API */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Evolution API</CardTitle>
+          <Zap className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{stats.evolutionInstances}</div>
+          <p className="text-xs text-muted-foreground">
+            instâncias ativas
+          </p>
+          <Button className="w-full mt-2" asChild>
+            <Link to="/evolution/instances">
+              <Zap className="mr-2 h-4 w-4" />
+              Gerenciar Instâncias
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
-        <TabsContent value="openlines" className="mt-6">
-          <OpenChannelsManager />
-        </TabsContent>
+      {/* Vínculos */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Vínculos</CardTitle>
+          <Link2 className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{stats.bindings}</div>
+          <p className="text-xs text-muted-foreground">
+            canais vinculados
+          </p>
+          <Button className="w-full mt-2" asChild>
+            <Link to="/bindings">
+              <Link2 className="mr-2 h-4 w-4" />
+              Ver Vínculos
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
-        <TabsContent value="messages" className="mt-6">
-          <MessageMonitor />
-        </TabsContent>
+      {/* Leads Importados */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Leads</CardTitle>
+          <Activity className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{stats.importedLeads}</div>
+          <p className="text-xs text-muted-foreground">
+            leads importados
+          </p>
+        </CardContent>
+      </Card>
 
-        <TabsContent value="real-messages" className="mt-6">
-          <RealMessageMonitor />
-        </TabsContent>
-
-        <TabsContent value="settings" className="mt-6">
-          <ConfigurationPanel />
-        </TabsContent>
-      </Tabs>
+      {/* Mensagens Enviadas */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Mensagens</CardTitle>
+          <Activity className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{stats.sentMessages}</div>
+          <p className="text-xs text-muted-foreground">
+            mensagens enviadas (30d)
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 };
