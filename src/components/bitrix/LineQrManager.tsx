@@ -1,175 +1,172 @@
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { QrCode, Play, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useLineEvolution } from "@/hooks/useLineEvolution";
+import { QrCode, Zap, Phone } from "lucide-react";
 
-type Line = { ID: string; NAME: string };
+type Line = {
+  ID: string;
+  NAME: string;
+  id: string;
+  name: string;
+};
+
+function extractStatusColor(status: string): string {
+  status = (status || "").toLowerCase();
+  if (status.includes("open") || status.includes("connected")) return "green";
+  if (status.includes("connecting") || status.includes("qr") || status.includes("pair")) return "yellow";
+  return "red";
+}
 
 export default function LineQrManager({ lines }: { lines: Line[] }) {
   const { toast } = useToast();
+  const [testPhone, setTestPhone] = useState("");
   const {
     loadingLine,
-    qrByLine,
     statusByLine,
+    qrByLine,
     startSession,
     refreshStatus,
     startPolling,
+    stopPolling,
+    testSend,
   } = useLineEvolution();
-  const [lastActionLine, setLastActionLine] = useState<string | null>(null);
 
-  const handleShowQr = async (line: Line) => {
-    setLastActionLine(line.ID);
+  const handleConnect = async (line: Line) => {
     try {
-      // Map Bitrix line format to hook expected format
-      const mappedLine = { id: line.ID, name: line.NAME };
-      await startSession(mappedLine);
-      startPolling(mappedLine);
-      toast({
-        title: "Sessão iniciada",
-        description: `Iniciando conexão para a linha ${line.NAME}. QR será exibido se necessário.`,
-      });
+      await startSession(line.id); // Extract id from line object
+      startPolling(line.id, 4000); // Extract id from line object
+      toast({ title: "Iniciando conexão", description: `Conectando linha ${line.name}...` });
     } catch (e: any) {
-      console.error("[LineQrManager] Session start error:", e);
-      toast({
-        title: "Erro ao iniciar sessão",
-        description: e.message || "Falha ao iniciar sessão Evolution para a linha.",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: e.message || "Falha ao conectar", variant: "destructive" });
     }
   };
 
-  const handleRefreshStatus = async (line: Line) => {
-    setLastActionLine(line.ID);
+  const handleRefresh = async (line: Line) => {
     try {
-      // Map Bitrix line format to hook expected format
-      const mappedLine = { id: line.ID, name: line.NAME };
-      await refreshStatus(mappedLine);
-      toast({
-        title: "Status atualizado",
-        description: `Status da linha ${line.NAME} foi verificado.`,
-      });
+      await refreshStatus(line.id); // Extract id from line object
     } catch (e: any) {
-      console.error("[LineQrManager] Refresh error:", e);
-      toast({
-        title: "Erro ao atualizar",
-        description: e.message || "Falha ao verificar status da linha.",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: e.message || "Falha ao atualizar", variant: "destructive" });
     }
   };
 
-  if (!lines || lines.length === 0) return null;
+  const handleTestSend = async (line: Line) => {
+    if (!testPhone.trim()) {
+      toast({ title: "Telefone obrigatório", description: "Informe um telefone para teste", variant: "destructive" });
+      return;
+    }
+    try {
+      await testSend(line.id, testPhone); // Extract id from line object
+      toast({ title: "Teste enviado", description: `Mensagem enviada para ${testPhone}` });
+    } catch (e: any) {
+      toast({ title: "Erro no teste", description: e.message || "Falha ao enviar", variant: "destructive" });
+    }
+  };
+
+  useEffect(() => {
+    lines.forEach((line) => {
+      startPolling(line.id, 4000);
+    });
+    return () => {
+      lines.forEach((line) => {
+        stopPolling(line.id);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines.map((l) => l.ID).join(",")]);
 
   return (
-    <Card className="p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <Label className="font-medium">Conexão WhatsApp Evolution API</Label>
-      </div>
-      <div className="space-y-3">
-        {lines.map((line) => {
-          const currentStatus = statusByLine[line.ID] || "";
-          const stateLower = currentStatus.toLowerCase();
-          const connected = stateLower.includes("connected") || stateLower.includes("open");
-          const pending = stateLower.includes("qr") || stateLower.includes("pair") || stateLower === "" || stateLower === "unknown" || stateLower.includes("connecting");
-          const qrCode = qrByLine[line.ID];
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {lines.map((line) => (
+        <Card key={line.ID} className="bg-muted/50">
+          <div className="flex items-center justify-between p-4">
+            <div>
+              <h3 className="text-lg font-semibold">{line.name}</h3>
+              <p className="text-sm text-muted-foreground">ID: {line.id}</p>
+            </div>
+            <Badge variant="secondary" className="uppercase">
+              {statusByLine[line.id] || "offline"}
+            </Badge>
+          </div>
 
-          return (
-            <Card key={line.ID} className="p-3">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                  <div className="font-medium">{line.NAME}</div>
-                  <div className="text-xs text-muted-foreground">ID: {line.ID}</div>
-                  <div className="text-xs text-muted-foreground">Instância: evo_line_{line.ID}</div>
-                  <div className="mt-2 flex items-center gap-2">
-                    {connected ? (
-                      <Badge className="gap-1 bg-green-100 text-green-800">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Conectado
-                      </Badge>
-                    ) : pending ? (
-                      <Badge variant="secondary" className="gap-1">
-                        <AlertTriangle className="h-3 w-3 text-orange-500" />
-                        {qrCode ? "QR Disponível" : "Aguardando..."}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">
-                        {currentStatus || "Desconhecido"}
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRefreshStatus(line)}
-                    disabled={loadingLine === line.ID}
-                  >
-                    <RefreshCw className={`h-4 w-4 mr-1 ${loadingLine === line.ID ? "animate-spin" : ""}`} />
-                    Verificar
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    onClick={() => handleShowQr(line)}
-                    disabled={loadingLine === line.ID}
-                    className="bg-green-600 hover:bg-green-700"
-                  >
-                    <Play className="h-4 w-4 mr-1" />
-                    {connected ? "Reconectar" : "Conectar"}
-                  </Button>
-                </div>
+          <div className="p-4 flex flex-col gap-3">
+            {qrByLine[line.id] ? (
+              <div className="flex flex-col items-center justify-center">
+                <img src={qrByLine[line.id]} alt="QR Code" className="max-w-full h-auto" />
+                <p className="text-xs text-muted-foreground mt-2">Escaneie para conectar</p>
               </div>
+            ) : (
+              <div className="flex items-center justify-center">
+                <span className={`inline-block h-2 w-2 rounded-full bg-${extractStatusColor(statusByLine[line.id])}-500 mr-2`}></span>
+                {statusByLine[line.id] === "connected" ? "Conectado" : "Aguardando leitura do QR Code..."}
+              </div>
+            )}
 
-              {qrCode && (
-                <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-center">
-                    <img
-                      alt={`QR Code para ${line.NAME}`}
-                      src={`data:image/png;base64,${qrCode}`}
-                      className="w-48 h-48 border rounded bg-white p-2"
-                    />
-                  </div>
-                  <div className="text-sm text-center text-muted-foreground mt-2">
-                    <QrCode className="h-4 w-4 inline mr-1" />
-                    Escaneie este QR no WhatsApp para conectar
-                  </div>
-                  {lastActionLine === line.ID && (
-                    <div className="text-xs text-center text-muted-foreground mt-1">
-                      O QR é atualizado automaticamente até a conexão ser estabelecida
-                    </div>
-                  )}
-                </div>
-              )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => handleConnect(line)}
+                disabled={loadingLine === line.id}
+                className="w-full"
+              >
+                {loadingLine === line.id ? (
+                  <>
+                    <QrCode className="mr-2 h-4 w-4 animate-spin" />
+                    Conectando...
+                  </>
+                ) : (
+                  <>
+                    <QrCode className="mr-2 h-4 w-4" />
+                    Reconectar
+                  </>
+                )}
+              </Button>
+              <Button variant="secondary" onClick={() => handleRefresh(line)} className="w-full">
+                <Refresh className="mr-2 h-4 w-4" />
+                Atualizar
+              </Button>
+            </div>
 
-              {loadingLine === line.ID && (
-                <div className="mt-3 flex items-center justify-center text-sm text-muted-foreground">
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Processando...
-                </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
-      
-      <div className="text-xs text-muted-foreground bg-blue-50 p-3 rounded">
-        <strong>Como funciona:</strong>
-        <br />
-        1. Clique em "Conectar" para iniciar uma nova sessão Evolution
-        <br />
-        2. Se necessário, um QR Code será exibido para pareamento
-        <br />
-        3. Escaneie o QR no WhatsApp para conectar a linha
-        <br />
-        4. O status será atualizado automaticamente quando conectado
-      </div>
-    </Card>
+            <div className="flex items-center gap-2">
+              <Input
+                type="tel"
+                placeholder="Telefone para teste"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                className="flex-grow"
+              />
+              <Button variant="default" onClick={() => handleTestSend(line)} disabled={loadingLine === line.id}>
+                <Zap className="mr-2 h-4 w-4" />
+                Testar
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function Refresh(props: any) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M12 18v-3h3" />
+    </svg>
   );
 }
