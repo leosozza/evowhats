@@ -1,6 +1,8 @@
 
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import ConnectionStatus from "./ConnectionStatus";
 import ConfigurationPanel from "./ConfigurationPanel";
 import MessageMonitor from "./MessageMonitor";
@@ -11,10 +13,14 @@ import {
   Settings, 
   MessageSquare,
   Zap,
-  Radio
+  Radio,
+  Bot
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const Dashboard = () => {
+  const navigate = useNavigate();
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="text-center space-y-2">
@@ -23,6 +29,28 @@ const Dashboard = () => {
           Integração Evolution API + Bitrix24 Open Channels
         </p>
       </div>
+
+      {/* Quick Actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            Ações Rápidas
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-4">
+            <Button onClick={() => navigate("/evolution/instances")} className="flex items-center gap-2">
+              <Bot className="h-4 w-4" />
+              Instâncias Evolution
+            </Button>
+            <Button onClick={() => navigate("/bindings")} variant="outline" className="flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Gerenciar Bindings
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="connections" className="w-full">
         <TabsList className="grid w-full grid-cols-5">

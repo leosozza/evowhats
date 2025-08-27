@@ -11,6 +11,7 @@ import ContactCenterLanding from "@/pages/ContactCenterLanding";
 import ConnectorSetup from "@/pages/ConnectorSetup";
 import BitrixCallback from "@/pages/BitrixCallback";
 import BindingsDashboard from "@/pages/BindingsDashboard";
+import EvolutionInstances from "@/pages/EvolutionInstances";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,6 +33,7 @@ const App = () => {
             <Route path="/bitrix-callback" element={<BitrixCallback />} />
             <Route path="/bitrix/callback" element={<BitrixCallback />} />
             <Route path="/bindings" element={<BindingsDashboard />} />
+            <Route path="/evolution/instances" element={<EvolutionInstances />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

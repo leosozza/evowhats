@@ -1,5 +1,4 @@
 
-import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -14,29 +13,17 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-async function logStructured(service: any, log: any) {
-  try {
-    await service.from("webhook_logs").insert({
-      provider: "evolution",
-      payload_json: {
-        category: log.category,
-        action: log.action,
-        lineId: log.lineId,
-        instanceName: log.instanceName,
-        state: log.state,
-        provider: "evolution",
-        data: log.data || {}
-      },
-      valid_signature: true,
-      received_at: new Date().toISOString()
-    });
-  } catch (e) {
-    console.error("[evolution-connector-v2] Log error:", e);
-  }
+async function logStructured(category: string, action: string, data: any = {}) {
+  console.log(JSON.stringify({
+    category,
+    action,
+    timestamp: new Date().toISOString(),
+    ...data
+  }));
 }
 
 async function callEvolutionAPI(path: string, method = "GET", body?: any) {
-  const url = `${EVOLUTION_BASE_URL}${path}`;
+  const url = `${EVOLUTION_BASE_URL.replace(/\/$/, "")}${path}`;
   const options: RequestInit = {
     method,
     headers: {
@@ -111,11 +98,7 @@ serve(async (req) => {
     const body = await req.json();
     const { action } = body;
 
-    await logStructured(service, {
-      category: "REQUEST",
-      action,
-      data: { action, ...body }
-    });
+    await logStructured("REQUEST", action, { action, ...body });
 
     if (action === "list_instances") {
       const result = await callEvolutionAPI("/instance/fetchInstances");
@@ -159,22 +142,20 @@ serve(async (req) => {
     }
 
     if (action === "ensure_line_session") {
-      const { bitrix_line_id, bitrix_line_name } = body;
-      if (!bitrix_line_id) {
+      const { lineId, lineName } = body;
+      if (!lineId) {
         return new Response(
-          JSON.stringify({ ok: false, error: "missing bitrix_line_id" }),
+          JSON.stringify({ ok: false, error: "missing lineId" }),
           { status: 400, headers: corsHeaders }
         );
       }
 
-      const instanceName = instanceNameForLine(String(bitrix_line_id));
+      const instanceName = instanceNameForLine(String(lineId));
 
-      await logStructured(service, {
-        category: "EVOLUTION",
-        action: "ensure_line_session",
-        lineId: bitrix_line_id,
+      await logStructured("EVO", "ensure_line_session", {
+        lineId,
         instanceName,
-        data: { bitrix_line_name }
+        lineName
       });
 
       try {
@@ -185,7 +166,7 @@ serve(async (req) => {
 
         if (result.ok || result.status === 409 || result.status === 400) {
           // Grava binding (best effort)
-          await upsertBinding(service, instanceName, String(bitrix_line_id));
+          await upsertBinding(service, instanceName, String(lineId));
           
           return new Response(
             JSON.stringify({ 
@@ -200,7 +181,7 @@ serve(async (req) => {
         const msg = String(e);
         if (/exist|already/i.test(msg)) {
           // Instância já existe
-          await upsertBinding(service, instanceName, String(bitrix_line_id));
+          await upsertBinding(service, instanceName, String(lineId));
           return new Response(
             JSON.stringify({ ok: true, instanceName, warn: "already_exists" }),
             { headers: corsHeaders }
@@ -226,12 +207,10 @@ serve(async (req) => {
 
       const instanceName = (await getBinding(service, String(lineId))) || instanceNameForLine(String(lineId));
 
-      await logStructured(service, {
-        category: "EVOLUTION",
-        action: "start_session_for_line",
+      await logStructured("EVO", "start_session_for_line", {
         lineId,
         instanceName,
-        data: { number }
+        number
       });
 
       const connectPath = number 
@@ -334,12 +313,10 @@ serve(async (req) => {
 
       const success = await upsertBinding(service, String(instanceId), String(lineId));
 
-      await logStructured(service, {
-        category: "BINDING",
-        action: "bind_line",
+      await logStructured("BINDING", "bind_line", {
         lineId,
         instanceName: instanceId,
-        data: { bound: success }
+        bound: success
       });
 
       return new Response(
@@ -368,12 +345,13 @@ serve(async (req) => {
           const result = await callEvolutionAPI(`/message/sendText/${encodeURIComponent(instanceName)}`, "POST", payload);
 
           if (result.ok) {
-            await logStructured(service, {
-              category: "OUTBOUND",
-              action: "test_send",
+            await logStructured("OUTBOUND", "test_send", {
+              success: true,
+              attempt: attempt + 1,
               lineId,
               instanceName,
-              data: { success: true, attempt: attempt + 1, to, text }
+              to,
+              text
             });
 
             return new Response(
@@ -392,12 +370,12 @@ serve(async (req) => {
         }
       }
 
-      await logStructured(service, {
-        category: "OUTBOUND",
-        action: "test_send",
+      await logStructured("OUTBOUND", "test_send", {
+        success: false,
+        error: lastError,
         lineId,
         instanceName,
-        data: { success: false, error: lastError, to }
+        to
       });
 
       return new Response(
@@ -414,11 +392,7 @@ serve(async (req) => {
   } catch (error: any) {
     console.error("[evolution-connector-v2] Error:", error);
     
-    await logStructured(service, {
-      category: "ERROR",
-      action: "unknown",
-      data: { error: error.message }
-    });
+    await logStructured("ERROR", "unknown", { error: error.message });
 
     return new Response(
       JSON.stringify({ ok: false, error: error.message }),

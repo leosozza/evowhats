@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export type Line = { ID: string; NAME: string };
+export type Line = { id: string; name: string };
 
 type UseLineEvolutionState = {
   loadingLine: string | null;
@@ -42,16 +42,16 @@ export function useLineEvolution(): UseLineEvolutionApi {
   const timersRef = useRef<Map<string, number>>(new Map());
 
   const startSession = useCallback(async (line: Line) => {
-    setLoadingLine(line.ID);
+    setLoadingLine(line.id);
     try {
-      console.log(`[useLineEvolution] Starting session for line ${line.ID}`);
+      console.log(`[useLineEvolution] Starting session for line ${line.id}`);
       
       // 1. Ensure line session exists
       const { data: ensureResult, error: ensureError } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { 
           action: "ensure_line_session", 
-          bitrix_line_id: line.ID, 
-          bitrix_line_name: line.NAME 
+          lineId: line.id, 
+          lineName: line.name 
         },
       });
 
@@ -62,7 +62,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
       const { data: startResult, error: startError } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { 
           action: "start_session_for_line", 
-          lineId: line.ID
+          lineId: line.id
         },
       });
 
@@ -79,13 +79,13 @@ export function useLineEvolution(): UseLineEvolutionApi {
 
   const refreshStatus = useCallback(async (line: Line) => {
     try {
-      console.log(`[useLineEvolution] Refreshing status for line ${line.ID}`);
+      console.log(`[useLineEvolution] Refreshing status for line ${line.id}`);
       
       // Get status
       const { data: statusResult, error: statusError } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { 
           action: "get_status_for_line", 
-          lineId: line.ID
+          lineId: line.id
         },
       });
 
@@ -93,28 +93,28 @@ export function useLineEvolution(): UseLineEvolutionApi {
       if (!statusResult?.ok) throw new Error(statusResult?.error || "Failed to get status");
 
       const state = normalizeState(statusResult?.state || statusResult?.data?.state || "unknown");
-      setStatusByLine(prev => ({ ...prev, [line.ID]: state }));
+      setStatusByLine(prev => ({ ...prev, [line.id]: state }));
 
       if (isConnected(state)) {
         // Connected: clear QR
-        setQrByLine(prev => ({ ...prev, [line.ID]: null }));
-        console.log(`[useLineEvolution] Line ${line.ID} connected, clearing QR`);
+        setQrByLine(prev => ({ ...prev, [line.id]: null }));
+        console.log(`[useLineEvolution] Line ${line.id} connected, clearing QR`);
       } else if (isPending(state)) {
         // Pending: get QR
         try {
           const { data: qrResult, error: qrError } = await supabase.functions.invoke("evolution-connector-v2", {
             body: { 
               action: "get_qr_for_line", 
-              lineId: line.ID
+              lineId: line.id
             },
           });
 
           if (!qrError && qrResult?.ok && qrResult?.qr_base64) {
-            setQrByLine(prev => ({ ...prev, [line.ID]: qrResult.qr_base64 }));
-            console.log(`[useLineEvolution] QR updated for line ${line.ID}`);
+            setQrByLine(prev => ({ ...prev, [line.id]: qrResult.qr_base64 }));
+            console.log(`[useLineEvolution] QR updated for line ${line.id}`);
           } else if (qrResult?.pairing_code) {
             // If pairing code is available, show it as text instead of QR
-            console.log(`[useLineEvolution] Pairing code available for line ${line.ID}: ${qrResult.pairing_code}`);
+            console.log(`[useLineEvolution] Pairing code available for line ${line.id}: ${qrResult.pairing_code}`);
           }
         } catch (qrErr) {
           console.warn("[useLineEvolution] QR fetch failed:", qrErr);
@@ -123,7 +123,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
 
     } catch (error) {
       console.error("[useLineEvolution] Status refresh failed:", error);
-      setStatusByLine(prev => ({ ...prev, [line.ID]: "error" }));
+      setStatusByLine(prev => ({ ...prev, [line.id]: "error" }));
     }
   }, []);
 
@@ -142,18 +142,18 @@ export function useLineEvolution(): UseLineEvolutionApi {
 
   const startPolling = useCallback((line: Line, intervalMs: number = 4000) => {
     // Avoid multiple timers
-    if (timersRef.current.has(line.ID)) return;
+    if (timersRef.current.has(line.id)) return;
 
-    console.log(`[useLineEvolution] Starting polling for line ${line.ID}`);
+    console.log(`[useLineEvolution] Starting polling for line ${line.id}`);
 
     const poll = async () => {
       try {
         await refreshStatus(line);
         // If connected, stop polling
-        const currentStatus = statusByLine[line.ID] || "";
+        const currentStatus = statusByLine[line.id] || "";
         if (isConnected(currentStatus)) {
-          console.log(`[useLineEvolution] Line ${line.ID} connected, stopping polling`);
-          stopPolling(line.ID);
+          console.log(`[useLineEvolution] Line ${line.id} connected, stopping polling`);
+          stopPolling(line.id);
         }
       } catch (error) {
         console.error("[useLineEvolution] Polling error:", error);
@@ -165,7 +165,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
     
     // Set interval
     const id = window.setInterval(poll, intervalMs);
-    timersRef.current.set(line.ID, id);
+    timersRef.current.set(line.id, id);
   }, [refreshStatus, statusByLine]);
 
   const stopPolling = useCallback((lineId: string) => {

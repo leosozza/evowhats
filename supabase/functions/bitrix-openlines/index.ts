@@ -1,5 +1,4 @@
 
-import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -12,73 +11,65 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-async function getBitrixTokens(service: any, portalUrl?: string) {
-  const query = service.from("bitrix_credentials").select("*").eq("is_active", true);
-  
-  if (portalUrl) {
-    query.eq("portal_url", portalUrl);
-  }
-  
-  const { data, error } = await query.limit(1).maybeSingle();
-  
+async function getBitrixTokens(supabase: any, userId: string) {
+  const { data, error } = await supabase
+    .from("bitrix_tokens")
+    .select("*")
+    .eq("user_id", userId)
+    .single();
+
   if (error || !data) {
-    throw new Error("No active Bitrix credentials found");
+    throw new Error("Tokens do Bitrix não encontrados");
   }
+
+  // Check if token needs refresh
+  const now = new Date();
+  const expiresAt = new Date(data.expires_at);
   
+  if (now >= expiresAt) {
+    // Refresh token
+    const refreshResponse = await supabase.functions.invoke("bitrix-token-refresh", {
+      body: { userId }
+    });
+    
+    if (refreshResponse.error || !refreshResponse.data?.ok) {
+      throw new Error("Falha ao renovar token do Bitrix");
+    }
+    
+    // Get updated tokens
+    const { data: updatedData } = await supabase
+      .from("bitrix_tokens")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+    
+    return updatedData;
+  }
+
   return data;
 }
 
-async function refreshTokenIfNeeded(service: any, credentials: any) {
-  const expiresAt = new Date(credentials.expires_at);
-  const now = new Date();
-  const buffer = 5 * 60 * 1000; // 5 minutes buffer
-  
-  if (expiresAt.getTime() - now.getTime() < buffer) {
-    // Token needs refresh
-    const refreshResult = await fetch("https://oauth.bitrix.info/oauth/token/", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: credentials.client_id,
-        client_secret: credentials.client_secret,
-        refresh_token: credentials.refresh_token,
-      }),
-    });
-    
-    if (refreshResult.ok) {
-      const tokens = await refreshResult.json();
-      const newExpiresAt = new Date(Date.now() + (tokens.expires_in - 60) * 1000).toISOString();
-      
-      await service.from("bitrix_credentials").update({
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token || credentials.refresh_token,
-        expires_at: newExpiresAt,
-        updated_at: new Date().toISOString()
-      }).eq("id", credentials.id);
-      
-      return { ...credentials, access_token: tokens.access_token };
-    }
-  }
-  
-  return credentials;
-}
-
-async function callBitrixAPI(method: string, credentials: any, params: any = {}) {
-  const url = `${credentials.portal_url}/rest/${method}`;
-  const body = new URLSearchParams({
-    auth: credentials.access_token,
-    ...params
-  });
+async function callBitrixAPI(domain: string, accessToken: string, method: string, params: any = {}) {
+  const url = `https://${domain}/rest/${method}`;
   
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      auth: accessToken,
+      ...params
+    })
   });
-  
+
   const data = await response.json();
-  return { ok: response.ok, data };
+  
+  if (!response.ok || data.error) {
+    throw new Error(data.error_description || data.error || "Erro na API do Bitrix");
+  }
+
+  return data;
 }
 
 serve(async (req) => {
@@ -86,78 +77,86 @@ serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  if (req.method === "GET") {
-    return new Response(
-      JSON.stringify({ ok: true, message: "bitrix-openlines alive" }),
-      { headers: corsHeaders }
-    );
-  }
-
-  const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
+    const { data: { user } } = await supabase.auth.getUser(
+      req.headers.get("Authorization")?.replace("Bearer ", "") || ""
+    );
+
+    if (!user) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "Não autorizado" }),
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
     const body = await req.json();
     const { action } = body;
 
+    const tokens = await getBitrixTokens(supabase, user.id);
+
     if (action === "list_lines") {
-      const credentials = await getBitrixTokens(service);
-      const refreshedCredentials = await refreshTokenIfNeeded(service, credentials);
-      
-      const result = await callBitrixAPI("imopenlines.config.list.get", refreshedCredentials);
-      
-      if (result.ok && result.data?.result) {
-        const lines = Object.values(result.data.result).map((line: any) => ({
-          id: line.ID || line.id,
-          name: line.LINE_NAME || line.name || `Line ${line.ID || line.id}`,
-          active: line.ACTIVE === "Y" || line.active === true
-        }));
-        
-        return new Response(
-          JSON.stringify({ ok: true, lines }),
-          { headers: corsHeaders }
-        );
-      }
+      const result = await callBitrixAPI(
+        tokens.domain,
+        tokens.access_token,
+        "imopenlines.config.list.get"
+      );
+
+      const lines = result.result || [];
       
       return new Response(
-        JSON.stringify({ ok: false, error: "Failed to fetch lines" }),
-        { status: 500, headers: corsHeaders }
+        JSON.stringify({ 
+          ok: true, 
+          lines: lines.map((line: any) => ({
+            ID: line.ID,
+            NAME: line.LINE_NAME || `Linha ${line.ID}`,
+            ACTIVE: line.ACTIVE === "Y"
+          }))
+        }),
+        { headers: corsHeaders }
       );
     }
 
     if (action === "send_message_to_line") {
-      const { chatId, text, fileUrl } = body;
+      const { chatId, message, lineId } = body;
       
-      const credentials = await getBitrixTokens(service);
-      const refreshedCredentials = await refreshTokenIfNeeded(service, credentials);
-      
-      const params: any = {
-        chat_id: chatId,
-        message: text || ""
-      };
-      
-      if (fileUrl) {
-        params.file = fileUrl;
+      if (!chatId || !message) {
+        return new Response(
+          JSON.stringify({ ok: false, error: "chatId e message são obrigatórios" }),
+          { status: 400, headers: corsHeaders }
+        );
       }
-      
-      const result = await callBitrixAPI("imopenlines.message.add", refreshedCredentials, params);
-      
+
+      const result = await callBitrixAPI(
+        tokens.domain,
+        tokens.access_token,
+        "imopenlines.message.add",
+        {
+          CHAT_ID: chatId,
+          MESSAGE: message,
+          SYSTEM: "N"
+        }
+      );
+
       return new Response(
         JSON.stringify({ 
-          ok: result.ok, 
-          data: result.data,
-          error: result.ok ? undefined : "Failed to send message"
+          ok: true, 
+          messageId: result.result,
+          data: result 
         }),
         { headers: corsHeaders }
       );
     }
 
     return new Response(
-      JSON.stringify({ ok: false, error: "Unknown action" }),
+      JSON.stringify({ ok: false, error: "Ação não reconhecida" }),
       { status: 400, headers: corsHeaders }
     );
 
   } catch (error: any) {
     console.error("[bitrix-openlines] Error:", error);
+    
     return new Response(
       JSON.stringify({ ok: false, error: error.message }),
       { status: 500, headers: corsHeaders }
