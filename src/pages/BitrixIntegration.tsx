@@ -1,16 +1,18 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ConnectBitrixButton } from '@/components/bitrix/ConnectBitrixButton';
-import { BitrixConnectionMonitor } from '@/components/bitrix/BitrixConnectionMonitor';
-import { BitrixSecretsConfig } from '@/components/bitrix/BitrixSecretsConfig';
-import { BitrixOpenChannelsConfig } from '@/components/bitrix/BitrixOpenChannelsConfig';
-import { BindEventsButton } from '@/components/bitrix/BindEventsButton';
-import { SyncLeadsButton } from '@/components/bitrix/SyncLeadsButton';
+import ConnectBitrixButton from '@/components/bitrix/ConnectBitrixButton';
+import BitrixConnectionMonitor from '@/components/bitrix/BitrixConnectionMonitor';
+import BitrixSecretsConfig from '@/components/bitrix/BitrixSecretsConfig';
+import BitrixOpenChannelsConfig from '@/components/bitrix/BitrixOpenChannelsConfig';
+import BindEventsButton from '@/components/bitrix/BindEventsButton';
+import SyncLeadsButton from '@/components/bitrix/SyncLeadsButton';
 import { Settings, Zap, Users, Link } from 'lucide-react';
 
 const BitrixIntegration = () => {
+  const [portalUrl, setPortalUrl] = useState('');
+
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="mb-8">
@@ -65,7 +67,10 @@ const BitrixIntegration = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ConnectBitrixButton />
+                <ConnectBitrixButton 
+                  portalUrl={portalUrl}
+                  onPortalUrlChange={setPortalUrl}
+                />
               </CardContent>
             </Card>
 
