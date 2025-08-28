@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,6 +8,7 @@ import { ArrowLeft } from "lucide-react";
 
 export default function EvolutionInstanceDetail() {
   const { instanceName = "" } = useParams();
+  const navigate = useNavigate();
   const [state, setState] = useState<string>("unknown");
   const [qr, setQr] = useState<string | null>(null);
   const timer = useRef<number | null>(null);

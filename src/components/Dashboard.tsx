@@ -19,10 +19,10 @@ const Dashboard = () => {
   const checkApiStatus = async () => {
     try {
       const evolutionCheck = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "test_api" },
+        body: { action: "list_instances" },
       });
       const bitrixCheck = await supabase.functions.invoke("bitrix-openlines", {
-        body: { action: "test_api" },
+        body: { action: "list_lines" },
       });
 
       setApiStatus({

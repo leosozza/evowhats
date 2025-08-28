@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Settings, Link2 } from "lucide-react";
+import { RefreshCw, Settings, Link2, ArrowLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useLineEvolution } from "@/hooks/useLineEvolution";
 import { listOpenChannelsLines } from "@/services/bitrixOpenChannelsManager";
@@ -18,6 +19,7 @@ type Line = {
 
 const BindingsDashboard = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -83,6 +85,13 @@ const BindingsDashboard = () => {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" onClick={() => navigate("/")} className="flex items-center gap-2">
+          <ArrowLeft className="h-4 w-4" />
+          Voltar ao Dashboard
+        </Button>
+        <h1 className="text-2xl font-bold">Gerenciar Bindings</h1>
+      </div>
       <Card>
         <CardHeader className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">

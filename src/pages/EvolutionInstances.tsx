@@ -1,15 +1,16 @@
-
 import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Link } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
+import { ArrowLeft, Eye } from "lucide-react";
 
 type Instance = { id: string; label?: string; status?: string; bound_line_id?: string };
 
 export default function EvolutionInstances() {
+  const navigate = useNavigate();
   const [instances, setInstances] = useState<Instance[]>([]);
   const [loading, setLoading] = useState(false);
   const [lineIdCreate, setLineIdCreate] = useState("");
@@ -120,12 +121,15 @@ export default function EvolutionInstances() {
 
   return (
     <div className="container mx-auto py-8 px-4">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Evolution API - Instâncias</h1>
-        <p className="text-muted-foreground">Gerencie instâncias do WhatsApp via Evolution API</p>
-      </div>
-      
       <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" onClick={() => navigate("/")} className="flex items-center gap-2">
+            <ArrowLeft className="h-4 w-4" />
+            Voltar ao Dashboard
+          </Button>
+          <h1 className="text-2xl font-bold">Instâncias Evolution</h1>
+        </div>
+
         <Card>
           <CardHeader><CardTitle>Evolution API — Validação & Criação</CardTitle></CardHeader>
           <CardContent className="flex gap-2 items-end">
@@ -164,6 +168,12 @@ export default function EvolutionInstances() {
                   <Button size="sm" onClick={() => status(it.bound_line_id || it.id)}>Status</Button>
                   <Button size="sm" onClick={() => start(it.bound_line_id || it.id)}>Conectar / QR</Button>
                   <Button size="sm" variant="outline" onClick={() => showQr(it.bound_line_id || it.id)}>Mostrar QR</Button>
+                  <Link to={`/evolution/instances/${it.id}`}>
+                    <Button size="sm" variant="outline" className="flex items-center gap-1">
+                      <Eye className="h-3 w-3" />
+                      Detalhes
+                    </Button>
+                  </Link>
                 </div>
                 <div className="flex gap-2 items-end pt-2">
                   <Input placeholder="Line ID para bind" onKeyDown={(e) => {
