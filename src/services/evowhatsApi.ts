@@ -98,11 +98,11 @@ export async function sendMessage(conversationId: string, text: string): Promise
   }
 
   // Send via Evolution API
-  const { data, error } = await supabase.functions.invoke('evolution-connector', {
+  const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
     body: {
-      action: 'send_message',
-      instance: conversation.evolution_instance || 'default',
-      number: conversation.contact_phone,
+      action: 'test_send',
+      lineId: conversation.evolution_instance || 'default',
+      to: conversation.contact_phone,
       text
     }
   });
@@ -178,11 +178,11 @@ export async function createInstance(instanceName: string, config: any = {}): Pr
 
   // Try to create/start the instance in Evolution API
   try {
-    await supabase.functions.invoke('evolution-connector', {
+    await supabase.functions.invoke('evolution-connector-v2', {
       body: {
-        action: 'create_instance',
-        instance: instanceName,
-        config
+        action: 'ensure_line_session',
+        lineId: instanceName,
+        ...config
       }
     });
   } catch (e) {
@@ -249,15 +249,10 @@ export async function testOpenLines(message: string = "Test message from Evowhat
 
   const { data, error } = await supabase.functions.invoke('bitrix-openlines', {
     body: {
-      action: 'openlines.sendMessage',
-      payload: {
-        tenantId: user.id,
-        text: message,
-        ensure: {
-          tenantId: user.id,
-          contact: { phone: '+5511999999999', name: 'Test Contact' }
-        }
-      }
+      action: 'send_message_to_line',
+      chatId: 'test_chat',
+      message: message,
+      lineId: '1'
     }
   });
 

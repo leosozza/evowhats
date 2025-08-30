@@ -18,19 +18,29 @@ const Dashboard = () => {
 
   const checkApiStatus = async () => {
     try {
+      // Check Evolution API
       const evolutionCheck = await supabase.functions.invoke("evolution-connector-v2", {
         body: { action: "list_instances" },
       });
+      
+      console.log("Evolution API response:", evolutionCheck);
+      
+      // Check Bitrix API  
       const bitrixCheck = await supabase.functions.invoke("bitrix-openlines", {
         body: { action: "list_lines" },
       });
+      
+      console.log("Bitrix API response:", bitrixCheck);
+
+      const evolutionOk = !evolutionCheck.error && (evolutionCheck.data?.ok === true || evolutionCheck.data?.instances !== undefined);
+      const bitrixOk = !bitrixCheck.error && bitrixCheck.data?.ok === true;
 
       setApiStatus({
-        evolutionApi: evolutionCheck.data?.ok === true,
-        bitrixApi: bitrixCheck.data?.ok === true,
+        evolutionApi: evolutionOk,
+        bitrixApi: bitrixOk,
       });
 
-      if (evolutionCheck.data?.ok === true) {
+      if (evolutionOk) {
         toast({
           title: "✅ API Evolution",
           description: "API Evolution está funcional",
@@ -38,12 +48,12 @@ const Dashboard = () => {
       } else {
         toast({
           title: "❌ API Evolution",
-          description: "API Evolution não está funcional",
+          description: evolutionCheck.error?.message || "API Evolution não está funcional",
           variant: "destructive",
         });
       }
 
-      if (bitrixCheck.data?.ok === true) {
+      if (bitrixOk) {
         toast({
           title: "✅ API Bitrix",
           description: "API Bitrix está funcional",
@@ -51,7 +61,7 @@ const Dashboard = () => {
       } else {
         toast({
           title: "❌ API Bitrix",
-          description: "API Bitrix não está funcional",
+          description: bitrixCheck.error?.message || "API Bitrix não está funcional",
           variant: "destructive",
         });
       }
