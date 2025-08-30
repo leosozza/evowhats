@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -114,43 +115,129 @@ const Dashboard = () => {
           </Card>
         </div>
 
-        {/* API Status Section */}
-        <section className="mb-8">
-          <h2 className="text-2xl font-semibold mb-4">Status da API</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>API Evolution</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-gray-500">
-                  Status:{" "}
-                  {apiStatus.evolutionApi ? (
-                    <span className="text-green-500">Funcional</span>
-                  ) : (
-                    <span className="text-red-500">Não Funcional</span>
-                  )}
-                </p>
-              </CardContent>
-            </Card>
+      {/* API Status Section */}
+      <section className="mb-8">
+        <h2 className="text-2xl font-semibold mb-4">Status da API</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>API Evolution</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-500 mb-4">
+                Status:{" "}
+                {apiStatus.evolutionApi ? (
+                  <span className="text-green-500">Funcional</span>
+                ) : (
+                  <span className="text-red-500">Não Funcional</span>
+                )}
+              </p>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={checkApiStatus}
+                className="w-full"
+              >
+                Testar Novamente
+              </Button>
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>API Bitrix</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-gray-500">
-                  Status:{" "}
-                  {apiStatus.bitrixApi ? (
-                    <span className="text-green-500">Funcional</span>
-                  ) : (
-                    <span className="text-red-500">Não Funcional</span>
-                  )}
-                </p>
-              </CardContent>
-            </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>API Bitrix</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-500 mb-4">
+                Status:{" "}
+                {apiStatus.bitrixApi ? (
+                  <span className="text-green-500">Funcional</span>
+                ) : (
+                  <span className="text-red-500">Não Funcional</span>
+                )}
+              </p>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={checkApiStatus}
+                className="w-full"
+              >
+                Testar Novamente
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+        
+        {/* Quick Test Section */}
+        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+          <h3 className="font-medium mb-2">Teste Rápido</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Para diagnosticar problemas, teste as APIs individualmente:
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="font-medium text-sm mb-2">Evolution API</h4>
+              <p className="text-xs text-gray-500 mb-2">
+                Configurar EVOLUTION_BASE_URL e EVOLUTION_API_KEY nas secrets do Supabase
+              </p>
+              <Button 
+                size="sm" 
+                onClick={async () => {
+                  try {
+                    const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+                      body: { action: "list_instances" },
+                    });
+                    console.log("Evolution test:", { data, error });
+                    toast({
+                      title: error ? "❌ Evolution Falha" : "✅ Evolution OK",
+                      description: error?.message || `Instâncias: ${data?.instances?.length || 0}`,
+                      variant: error ? "destructive" : "default",
+                    });
+                  } catch (e: any) {
+                    toast({
+                      title: "❌ Evolution Erro",
+                      description: e.message,
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              >
+                Testar Evolution
+              </Button>
+            </div>
+            <div>
+              <h4 className="font-medium text-sm mb-2">Bitrix24 API</h4>
+              <p className="text-xs text-gray-500 mb-2">
+                Requer autenticação OAuth. Faça login primeiro.
+              </p>
+              <Button 
+                size="sm" 
+                onClick={async () => {
+                  try {
+                    const { data, error } = await supabase.functions.invoke("bitrix-token-refresh", {
+                      body: {},
+                    });
+                    console.log("Bitrix test:", { data, error });
+                    toast({
+                      title: error ? "❌ Bitrix Falha" : "✅ Bitrix OK",
+                      description: error?.message || (data?.refreshed ? "Token atualizado" : "Token válido"),
+                      variant: error ? "destructive" : "default",
+                    });
+                  } catch (e: any) {
+                    toast({
+                      title: "❌ Bitrix Erro",
+                      description: e.message,
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              >
+                Testar Bitrix
+              </Button>
+            </div>
           </div>
-        </section>
+        </div>
+      </section>
       </div>
     </div>
   );

@@ -30,7 +30,6 @@ async function evo(path: string, init?: RequestInit) {
   return data;
 }
 
-
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
   const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);

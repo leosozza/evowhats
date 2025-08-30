@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import Dashboard from "@/components/Dashboard";
 import Settings from "@/pages/Settings";
 import BitrixIntegration from "@/pages/BitrixIntegration";
+import BitrixCallback from "@/pages/BitrixCallback";
 import BindingsDashboard from "@/pages/BindingsDashboard";
 import EvolutionInstances from "@/pages/EvolutionInstances";
 import EvolutionInstanceDetail from "@/pages/EvolutionInstanceDetail";
@@ -17,6 +18,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/bitrix" element={<BitrixIntegration />} />
+            <Route path="/bitrix/callback" element={<BitrixCallback />} />
             <Route path="/bindings" element={<BindingsDashboard />} />
             <Route path="/evolution/instances" element={<EvolutionInstances />} />
             <Route path="/evolution/instances/:instanceName" element={<EvolutionInstanceDetail />} />

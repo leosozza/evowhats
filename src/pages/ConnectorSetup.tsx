@@ -11,6 +11,12 @@ export default function ConnectorSetup() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<null | { ok: boolean; refreshed?: boolean }>(null);
 
+  const handlePortalUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const url = e.target.value;
+    setPortalUrl(url);
+    localStorage.setItem('bitrix_portal_url', url);
+  };
+
   async function refreshToken() {
     try {
       setLoading(true);
@@ -31,7 +37,11 @@ export default function ConnectorSetup() {
       <div className="flex gap-2 items-end">
         <div className="flex-1">
           <label className="block text-sm">URL do Portal Bitrix24</label>
-          <Input value={portalUrl} onChange={(e) => setPortalUrl(e.target.value)} placeholder="https://seuportal.bitrix24.com.br" />
+          <Input 
+            value={portalUrl} 
+            onChange={handlePortalUrlChange} 
+            placeholder="https://seuportal.bitrix24.com.br" 
+          />
         </div>
         <Button
           onClick={() =>

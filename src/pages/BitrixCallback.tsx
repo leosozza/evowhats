@@ -1,75 +1,66 @@
+import { useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
-import { useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
+const BitrixCallback = () => {
+  const [searchParams] = useSearchParams();
 
-export default function BitrixCallback() {
   useEffect(() => {
-    (async () => {
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get("code");
-      const state = params.get("state");
-      const domain = params.get("domain");
-      const stored = localStorage.getItem("bx_oauth_state");
+    const handleCallback = async () => {
+      const code = searchParams.get('code');
+      const state = searchParams.get('state');
+      const domain = searchParams.get('domain');
 
-      console.log("[BitrixCallback] Processing callback:", { code: !!code, state, domain, stored });
-
-      let ok = false;
-      let reason = "";
+      const savedState = localStorage.getItem('bx_oauth_state');
+      
+      if (!code || !state || state !== savedState) {
+        window.opener?.postMessage({ 
+          source: 'bitrix-oauth', 
+          ok: false, 
+          reason: 'State inválido ou código ausente' 
+        }, '*');
+        window.close();
+        return;
+      }
 
       try {
-        if (!code) {
-          reason = "missing_code";
-        } else if (!state || state !== stored) {
-          reason = "invalid_state";
-        } else {
-          console.log("[BitrixCallback] Calling oauth exchange...");
-          
-          const { data, error } = await supabase.functions.invoke("bitrix-oauth-exchange", {
-            body: { code, state, domain },
-          });
-          
-          console.log("[BitrixCallback] Exchange result:", { data, error });
-          
-          if (error) {
-            reason = error.message || "exchange_failed";
-          } else if (!data?.ok) {
-            reason = data?.error || "exchange_not_ok";
-          } else {
-            ok = true;
-            console.log("[BitrixCallback] OAuth exchange successful");
-          }
+        const { data, error } = await supabase.functions.invoke('bitrix-oauth-exchange', {
+          body: { code, state, domain }
+        });
+
+        if (error || !data?.ok) {
+          throw new Error(data?.error || 'Falha na troca de token');
         }
-      } catch (e: any) {
-        console.error("[BitrixCallback] Error:", e);
-        reason = e?.message || "unknown_error";
-      } finally {
-        // Clean up state
-        localStorage.removeItem("bx_oauth_state");
+
+        localStorage.removeItem('bx_oauth_state');
         
-        console.log("[BitrixCallback] Sending result to opener:", { ok, reason });
+        window.opener?.postMessage({ 
+          source: 'bitrix-oauth', 
+          ok: true 
+        }, '*');
         
-        // Send result to opener
-        window.opener?.postMessage(
-          { source: "bitrix-oauth", ok, reason }, 
-          window.location.origin
-        );
-        
-        // Close popup
-        try {
-          window.close();
-        } catch (e) {
-          console.warn("[BitrixCallback] Could not close window:", e);
-        }
+        window.close();
+      } catch (error: any) {
+        window.opener?.postMessage({ 
+          source: 'bitrix-oauth', 
+          ok: false, 
+          reason: error.message 
+        }, '*');
+        window.close();
       }
-    })();
-  }, []);
+    };
+
+    handleCallback();
+  }, [searchParams]);
 
   return (
     <div className="flex items-center justify-center min-h-screen">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-        <p className="mt-4 text-muted-foreground">Processando autenticação Bitrix24...</p>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto"></div>
+        <p className="mt-4">Processando autenticação...</p>
       </div>
     </div>
   );
-}
+};
+
+export default BitrixCallback;

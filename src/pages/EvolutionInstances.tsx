@@ -52,10 +52,56 @@ export default function EvolutionInstances() {
         body: { action: "start_session_for_line", lineId },
       });
       if (error) throw error;
-      toast({ title: "Sessão iniciada, buscando status/QR..." });
+      toast({ title: "Sessão iniciada, verificando status..." });
+      // Start polling for status
+      pollStatus(lineId);
     } catch (e: any) {
       toast({ title: "Erro ao iniciar sessão", description: e?.message || String(e), variant: "destructive" });
     }
+  }
+
+  async function pollStatus(lineId: string) {
+    const poll = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+          body: { action: "get_status_for_line", lineId },
+        });
+        if (error) throw error;
+        
+        const state = (data?.state || '').toLowerCase();
+        console.log(`Status para linha ${lineId}:`, state);
+        
+        if (state.includes('connecting')) {
+          // Show QR code
+          const qrResponse = await supabase.functions.invoke("evolution-connector-v2", {
+            body: { action: "get_qr_for_line", lineId },
+          });
+          
+          if (qrResponse.data?.qr_base64) {
+            const w = window.open();
+            w?.document.write(`
+              <div style="text-align:center; padding:20px;">
+                <h2>QR Code para Linha ${lineId}</h2>
+                <img src="data:image/png;base64,${qrResponse.data.qr_base64}" alt="QR Code" />
+                <p>Escaneie com seu WhatsApp</p>
+              </div>
+            `);
+          }
+          
+          // Continue polling
+          setTimeout(() => pollStatus(lineId), 3000);
+        } else if (state.includes('open') || state.includes('connected')) {
+          toast({ title: `Linha ${lineId} conectada com sucesso!` });
+          await listInstances();
+        } else if (state.includes('close') || state.includes('error')) {
+          toast({ title: `Linha ${lineId} desconectada`, variant: "destructive" });
+        }
+      } catch (e: any) {
+        console.error("Erro no polling:", e);
+      }
+    };
+    
+    poll();
   }
 
   async function status(lineId: string) {
