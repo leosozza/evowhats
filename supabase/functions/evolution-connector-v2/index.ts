@@ -38,6 +38,8 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const { action, lineId, instanceId, number, to, text } = body;
 
+    console.log(JSON.stringify({category: 'EVO', action, lineId, instanceId, timestamp: new Date().toISOString()}));
+
     // 1) Health / Lista
     if (action === "list_instances") {
       const data = await evo(`/instance/fetchInstances`, { method: "GET" });

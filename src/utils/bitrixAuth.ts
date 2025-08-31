@@ -23,7 +23,7 @@ export function openBitrixPopup(callback: (result: { ok: boolean; reason?: strin
   
   const authUrl = new URL('https://oauth.bitrix.info/oauth/authorize/');
   authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('client_id', 'local.your_app_id'); // This should be configured
+  authUrl.searchParams.set('client_id', 'local.676be862007c97.98291528'); 
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('domain', domain);

@@ -7,163 +7,272 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Eye } from "lucide-react";
 
-type Instance = { id: string; label?: string; status?: string; bound_line_id?: string };
-
 export default function EvolutionInstances() {
   const navigate = useNavigate();
-  const [instances, setInstances] = useState<Instance[]>([]);
+  const [instances, setInstances] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [lineIdCreate, setLineIdCreate] = useState("");
-  const [testTo, setTestTo] = useState("");
+  const [newLineId, setNewLineId] = useState("");
+  const [testNumbers, setTestNumbers] = useState<{ [key: string]: string }>({});
+  const [qrCodes, setQrCodes] = useState<{ [key: string]: string }>({});
+  const [connectionStates, setConnectionStates] = useState<{ [key: string]: string }>({});
+  const [activePolling, setActivePolling] = useState<{ [key: string]: boolean }>({});
+  const [openChannels, setOpenChannels] = useState<any[]>([]);
 
-  async function listInstances() {
-    setLoading(true);
+  const loadInstances = async () => {
     try {
+      setLoading(true);
       const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { action: "list_instances" },
       });
+
       if (error) throw error;
-      console.log("instances raw:", data);
-      setInstances(data?.instances || data?.data || []);
-      toast({ title: "Evolution API OK" });
-    } catch (e: any) {
-      toast({ title: "Falha ao listar instâncias", description: e?.message || String(e), variant: "destructive" });
+      if (data?.error) throw new Error(data.error);
+
+      const instanceList = data?.instances || [];
+      setInstances(instanceList);
+      
+      // Load connection states for each instance
+      for (const instance of instanceList) {
+        if (instance.instanceName) {
+          const lineId = instance.instanceName.replace('evo_line_', '');
+          checkConnectionState(lineId);
+        }
+      }
+      
+      toast({
+        title: "✅ Sucesso",
+        description: `${instanceList.length} instâncias carregadas`,
+      });
+    } catch (error: any) {
+      console.error("Error loading instances:", error);
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  async function ensure(lineId: string) {
+  const loadOpenChannels = async () => {
     try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "ensure_line_session", lineId },
+      const { data, error } = await supabase.functions.invoke("bitrix-openlines", {
+        body: { action: "list_lines" },
       });
-      if (error) throw error;
-      toast({ title: `Instância criada/garantida: ${data?.instanceName}` });
-      await listInstances();
-    } catch (e: any) {
-      toast({ title: "Erro ao criar instância", description: e?.message || String(e), variant: "destructive" });
-    }
-  }
-
-  async function start(lineId: string) {
-    try {
-      const { error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "start_session_for_line", lineId },
-      });
-      if (error) throw error;
-      toast({ title: "Sessão iniciada, verificando status..." });
-      // Start polling for status
-      pollStatus(lineId);
-    } catch (e: any) {
-      toast({ title: "Erro ao iniciar sessão", description: e?.message || String(e), variant: "destructive" });
-    }
-  }
-
-  async function pollStatus(lineId: string) {
-    const poll = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-          body: { action: "get_status_for_line", lineId },
-        });
-        if (error) throw error;
-        
-        const state = (data?.state || '').toLowerCase();
-        console.log(`Status para linha ${lineId}:`, state);
-        
-        if (state.includes('connecting')) {
-          // Show QR code
-          const qrResponse = await supabase.functions.invoke("evolution-connector-v2", {
-            body: { action: "get_qr_for_line", lineId },
-          });
-          
-          if (qrResponse.data?.qr_base64) {
-            const w = window.open();
-            w?.document.write(`
-              <div style="text-align:center; padding:20px;">
-                <h2>QR Code para Linha ${lineId}</h2>
-                <img src="data:image/png;base64,${qrResponse.data.qr_base64}" alt="QR Code" />
-                <p>Escaneie com seu WhatsApp</p>
-              </div>
-            `);
-          }
-          
-          // Continue polling
-          setTimeout(() => pollStatus(lineId), 3000);
-        } else if (state.includes('open') || state.includes('connected')) {
-          toast({ title: `Linha ${lineId} conectada com sucesso!` });
-          await listInstances();
-        } else if (state.includes('close') || state.includes('error')) {
-          toast({ title: `Linha ${lineId} desconectada`, variant: "destructive" });
-        }
-      } catch (e: any) {
-        console.error("Erro no polling:", e);
+      
+      if (!error && data?.lines) {
+        setOpenChannels(data.lines);
       }
-    };
-    
-    poll();
-  }
+    } catch (error) {
+      console.error("Error loading open channels:", error);
+    }
+  };
 
-  async function status(lineId: string) {
+  const checkConnectionState = async (lineId: string) => {
     try {
       const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
         body: { action: "get_status_for_line", lineId },
       });
-      if (error) throw error;
-      toast({ title: `Status: ${data?.state || "unknown"}` });
-    } catch (e: any) {
-      toast({ title: "Erro ao obter status", description: e?.message || String(e), variant: "destructive" });
-    }
-  }
 
-  async function showQr(lineId: string) {
-    try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "get_qr_for_line", lineId },
-      });
       if (error) throw error;
-      const b64 = data?.qr_base64;
-      if (b64) {
-        const w = window.open();
-        w?.document.write(`<img alt="QR" src="data:image/png;base64,${b64}" />`);
+      if (data?.error) throw new Error(data.error);
+
+      const state = (data?.state || "unknown").toLowerCase();
+      setConnectionStates(prev => ({ ...prev, [lineId]: state }));
+
+      return state;
+    } catch (error: any) {
+      console.error(`Error checking state for line ${lineId}:`, error);
+      setConnectionStates(prev => ({ ...prev, [lineId]: "error" }));
+      return "error";
+    }
+  };
+
+  const startPolling = (lineId: string) => {
+    if (activePolling[lineId]) return;
+
+    setActivePolling(prev => ({ ...prev, [lineId]: true }));
+
+    const poll = async () => {
+      if (!activePolling[lineId]) return;
+
+      const state = await checkConnectionState(lineId);
+      
+      if (state === "connecting") {
+        // Get QR code
+        try {
+          const { data } = await supabase.functions.invoke("evolution-connector-v2", {
+            body: { action: "get_qr_for_line", lineId },
+          });
+          
+          if (data?.qr_base64) {
+            setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${data.qr_base64}` }));
+          }
+        } catch (error) {
+          console.error("Error getting QR:", error);
+        }
+        
+        // Continue polling every 4 seconds
+        setTimeout(() => poll(), 4000);
+      } else if (state === "open") {
+        // Connected, stop polling and clear QR
+        setActivePolling(prev => ({ ...prev, [lineId]: false }));
+        setQrCodes(prev => ({ ...prev, [lineId]: "" }));
+        toast({
+          title: "✅ Conectado",
+          description: `Instância ${lineId} conectada com sucesso`,
+        });
       } else {
-        toast({ title: "QR indisponível (estado não é 'connecting')" });
+        // Other states, stop polling
+        setActivePolling(prev => ({ ...prev, [lineId]: false }));
+        setQrCodes(prev => ({ ...prev, [lineId]: "" }));
       }
-    } catch (e: any) {
-      toast({ title: "Erro ao obter QR", description: e?.message || String(e), variant: "destructive" });
-    }
-  }
+    };
 
-  async function bind(instanceId: string, lineId: string) {
-    try {
-      const { error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "bind_line", instanceId, lineId },
+    poll();
+  };
+
+  const createInstance = async () => {
+    if (!newLineId) {
+      toast({
+        title: "⚠️ Atenção", 
+        description: "Digite um Line ID",
+        variant: "destructive",
       });
-      if (error) throw error;
-      toast({ title: "Vinculado!" });
-      await listInstances();
-    } catch (e: any) {
-      toast({ title: "Erro ao vincular", description: e?.message || String(e), variant: "destructive" });
-    }
-  }
-
-  async function testSend(lineId: string) {
-    if (!testTo) {
-      toast({ title: "Informe um telefone para teste", variant: "destructive" });
       return;
     }
-    try {
-      const { error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "test_send", lineId, to: testTo },
-      });
-      if (error) throw error;
-      toast({ title: "Mensagem de teste enviada" });
-    } catch (e: any) {
-      toast({ title: "Erro no teste", description: e?.message || String(e), variant: "destructive" });
-    }
-  }
 
-  useEffect(() => { listInstances(); }, []);
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "ensure_line_session", lineId: newLineId },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      toast({
+        title: "✅ Sucesso",
+        description: `Instância ${data?.instanceName} criada/garantida`,
+      });
+      
+      setNewLineId("");
+      await loadInstances();
+    } catch (error: any) {
+      console.error("Error creating instance:", error);
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const connectInstance = async (lineId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "start_session_for_line", lineId },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      toast({
+        title: "✅ Sessão iniciada",
+        description: "Verificando status e gerando QR...",
+      });
+      
+      startPolling(lineId);
+    } catch (error: any) {
+      console.error("Error connecting instance:", error);
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const bindToChannel = async (instanceId: string, lineId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { action: "bind_line", instanceId, lineId },
+      });
+
+      if (error) throw error;
+      
+      if (data?.warn) {
+        toast({
+          title: "⚠️ Aviso",
+          description: "Binding não persistido, mas funcionalidade continua disponível",
+        });
+      } else {
+        toast({
+          title: "✅ Sucesso",
+          description: `Instância vinculada ao canal ${lineId}`,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const testSend = async (lineId: string) => {
+    const number = testNumbers[lineId];
+    if (!number) {
+      toast({
+        title: "⚠️ Atenção",
+        description: "Digite um número para testar",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: { 
+          action: "test_send", 
+          lineId, 
+          to: number,
+          text: "Teste de envio da instância Evolution"
+        },
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      toast({
+        title: "✅ Sucesso",
+        description: `Mensagem de teste enviada para ${number}`,
+      });
+    } catch (error: any) {
+      console.error("Error sending test message:", error);
+      toast({
+        title: "❌ Erro",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  useEffect(() => {
+    loadInstances();
+    loadOpenChannels();
+  }, []);
+
+  const getStatusColor = (state: string) => {
+    switch (state) {
+      case "open": return "text-green-500";
+      case "connecting": return "text-yellow-500";
+      case "close": return "text-red-500";
+      case "error": return "text-red-500";
+      default: return "text-gray-500";
+    }
+  };
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -178,67 +287,131 @@ export default function EvolutionInstances() {
 
         <Card>
           <CardHeader><CardTitle>Evolution API — Validação & Criação</CardTitle></CardHeader>
-          <CardContent className="flex gap-2 items-end">
-            <Button variant="outline" onClick={listInstances} disabled={loading}>
-              {loading ? "Validando..." : "Validar API / Recarregar"}
-            </Button>
-            <div className="flex items-end gap-2">
-              <div>
-                <label className="block text-sm">Line ID</label>
-                <Input value={lineIdCreate} onChange={e => setLineIdCreate(e.target.value)} placeholder="Ex.: 15" />
-              </div>
-              <Button onClick={() => lineIdCreate && ensure(lineIdCreate)}>Criar instância</Button>
-            </div>
-            <div className="flex items-end gap-2">
-              <div>
-                <label className="block text-sm">Telefone teste (E.164)</label>
-                <Input value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="+5511999999999" />
+          <CardContent className="space-y-4">
+            <div className="flex gap-2 items-end">
+              <Button variant="outline" onClick={loadInstances} disabled={loading}>
+                {loading ? "Validando..." : "Validar API / Recarregar"}
+              </Button>
+              <div className="flex items-end gap-2">
+                <div>
+                  <label className="block text-sm">Line ID</label>
+                  <Input 
+                    value={newLineId} 
+                    onChange={e => setNewLineId(e.target.value)} 
+                    placeholder="Ex.: 15" 
+                  />
+                </div>
+                <Button onClick={createInstance}>Criar instância</Button>
               </div>
             </div>
           </CardContent>
         </Card>
 
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {instances.map((it) => (
-            <Card key={it.id} className="hover:shadow-md transition-shadow">
-              <CardHeader>
-                <CardTitle>
-                  <Link to={`/evolution/instances/${it.id}`} className="hover:text-primary">
-                    {it.label || it.id}
-                  </Link>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="text-sm text-muted-foreground">Status: {it.status || "—"}</div>
-                <div className="flex gap-2 flex-wrap">
-                  <Button size="sm" onClick={() => status(it.bound_line_id || it.id)}>Status</Button>
-                  <Button size="sm" onClick={() => start(it.bound_line_id || it.id)}>Conectar / QR</Button>
-                  <Button size="sm" variant="outline" onClick={() => showQr(it.bound_line_id || it.id)}>Mostrar QR</Button>
-                  <Link to={`/evolution/instances/${it.id}`}>
-                    <Button size="sm" variant="outline" className="flex items-center gap-1">
-                      <Eye className="h-3 w-3" />
-                      Detalhes
+          {instances.map((instance) => {
+            const lineId = instance.instanceName?.replace('evo_line_', '') || instance.id;
+            const state = connectionStates[lineId] || "unknown";
+            
+            return (
+              <Card key={instance.id} className="hover:shadow-md transition-shadow">
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    <Link to={`/evolution/instances/${instance.id}`} className="hover:text-primary">
+                      {instance.instanceName || instance.id}
+                    </Link>
+                    <span className={`text-sm ${getStatusColor(state)}`}>
+                      {state}
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      size="sm" 
+                      onClick={() => checkConnectionState(lineId)}
+                    >
+                      Verificar Status
                     </Button>
-                  </Link>
-                </div>
-                <div className="flex gap-2 items-end pt-2">
-                  <Input placeholder="Line ID para bind" onKeyDown={(e) => {
-                    if (e.key === "Enter") bind(it.id, (e.target as HTMLInputElement).value);
-                  }} />
-                  <Button size="sm" onClick={() => {
-                    const input = (document.activeElement as HTMLInputElement);
-                    bind(it.id, input?.value || "");
-                  }}>Vincular</Button>
-                </div>
-                <div className="flex gap-2 items-center pt-2">
-                  <Button size="sm" onClick={() => testSend(it.bound_line_id || it.id)}>Testar envio</Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                    
+                    <Button
+                      onClick={() => {
+                        const lineId = instance.instanceName?.replace('evo_line_', '') || instance.id;
+                        connectInstance(lineId);
+                      }}
+                      disabled={connectionStates[instance.instanceName?.replace('evo_line_', '') || instance.id] === "connecting"}
+                    >
+                      {connectionStates[instance.instanceName?.replace('evo_line_', '') || instance.id] === "connecting" 
+                        ? "Conectando..." 
+                        : "Conectar / QR"}
+                    </Button>
+
+                    {/* Bind to Open Channel */}
+                    <div className="flex gap-2 mt-2">
+                      <select 
+                        className="flex-1 border rounded px-2 py-1 text-sm"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            bindToChannel(instance.instanceName || instance.id, e.target.value);
+                          }
+                        }}
+                      >
+                        <option value="">Vincular ao canal OL...</option>
+                        {openChannels.map(channel => (
+                          <option key={channel.ID} value={channel.ID}>
+                            {channel.NAME} (ID: {channel.ID})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <Link to={`/evolution/instances/${instance.id}`}>
+                      <Button size="sm" variant="outline" className="flex items-center gap-1">
+                        <Eye className="h-3 w-3" />
+                        Detalhes
+                      </Button>
+                    </Link>
+                  </div>
+
+                  {/* QR Code display */}
+                  {qrCodes[instance.instanceName?.replace('evo_line_', '') || instance.id] && (
+                    <div className="mt-4 p-4 border rounded bg-white">
+                      <p className="text-sm font-medium mb-2">Escaneie este QR Code:</p>
+                      <img 
+                        src={qrCodes[instance.instanceName?.replace('evo_line_', '') || instance.id]} 
+                        alt="QR Code"
+                        className="w-48 h-48 mx-auto border"
+                      />
+                      <p className="text-xs text-muted-foreground mt-2 text-center">
+                        O QR Code será atualizado automaticamente a cada 4 segundos
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Test send */}
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <label className="block text-xs text-muted-foreground">Teste de envio</label>
+                      <Input 
+                        placeholder="+5511999999999" 
+                        value={testNumbers[lineId] || ""}
+                        onChange={(e) => setTestNumbers(prev => ({ ...prev, [lineId]: e.target.value }))}
+                      />
+                    </div>
+                    <Button size="sm" onClick={() => testSend(lineId)}>
+                      Enviar
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
-        {instances.length === 0 && !loading && <div className="text-sm text-muted-foreground">Nenhuma instância encontrada.</div>}
+        {instances.length === 0 && !loading && (
+          <div className="text-center py-8 text-muted-foreground">
+            Nenhuma instância encontrada. Crie uma nova instância acima.
+          </div>
+        )}
       </div>
     </div>
   );

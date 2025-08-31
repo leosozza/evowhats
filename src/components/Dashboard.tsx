@@ -26,14 +26,14 @@ const Dashboard = () => {
       
       console.log("Evolution API response:", evolutionCheck);
       
-      // Check Bitrix API  
-      const bitrixCheck = await supabase.functions.invoke("bitrix-openlines", {
-        body: { action: "list_lines" },
+      // Check Bitrix API with token refresh
+      const bitrixCheck = await supabase.functions.invoke("bitrix-token-refresh", {
+        body: {},
       });
       
       console.log("Bitrix API response:", bitrixCheck);
 
-      const evolutionOk = !evolutionCheck.error && (evolutionCheck.data?.ok === true || evolutionCheck.data?.instances !== undefined);
+      const evolutionOk = !evolutionCheck.error && evolutionCheck.data?.ok !== false;
       const bitrixOk = !bitrixCheck.error && bitrixCheck.data?.ok === true;
 
       setApiStatus({
