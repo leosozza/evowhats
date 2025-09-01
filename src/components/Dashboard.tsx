@@ -19,12 +19,12 @@ const Dashboard = () => {
 
   const checkApiStatus = async () => {
     try {
-      // Check Evolution API
+      // Check Evolution API with diagnostic
       const evolutionCheck = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "list_instances" },
+        body: { action: "diag" },
       });
       
-      console.log("Evolution API response:", evolutionCheck);
+      console.log("Evolution API diagnostic:", evolutionCheck);
       
       // Check Bitrix API with token refresh
       const bitrixCheck = await supabase.functions.invoke("bitrix-token-refresh", {
@@ -33,7 +33,7 @@ const Dashboard = () => {
       
       console.log("Bitrix API response:", bitrixCheck);
 
-      const evolutionOk = !evolutionCheck.error && evolutionCheck.data?.ok !== false;
+      const evolutionOk = !evolutionCheck.error && evolutionCheck.data?.ok === true;
       const bitrixOk = !bitrixCheck.error && bitrixCheck.data?.ok === true;
 
       setApiStatus({
@@ -47,9 +47,20 @@ const Dashboard = () => {
           description: "API Evolution está funcional",
         });
       } else {
+        let errorMsg = "API Evolution não está funcional";
+        if (evolutionCheck.data?.steps) {
+          const failedStep = Object.entries(evolutionCheck.data.steps).find(([_, step]: [string, any]) => !step.ok);
+          if (failedStep) {
+            const [stepName, stepData] = failedStep as [string, any];
+            errorMsg = `Falha em ${stepName}: Status ${stepData.status} - ${stepData.error || 'Erro desconhecido'}`;
+          }
+        } else if (evolutionCheck.error?.message) {
+          errorMsg = evolutionCheck.error.message;
+        }
+        
         toast({
           title: "❌ API Evolution",
-          description: evolutionCheck.error?.message || "API Evolution não está funcional",
+          description: errorMsg,
           variant: "destructive",
         });
       }
@@ -146,14 +157,34 @@ const Dashboard = () => {
                 onClick={async () => {
                   try {
                     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-                      body: { action: "list_instances" },
+                      body: { action: "diag" },
                     });
-                    console.log("Evolution test:", { data, error });
-                    toast({
-                      title: error ? "❌ Evolution Falha" : "✅ Evolution OK",
-                      description: error?.message || `Instâncias: ${data?.instances?.length || 0}`,
-                      variant: error ? "destructive" : "default",
-                    });
+                    console.log("Evolution diagnostic:", { data, error });
+                    
+                    if (error) {
+                      toast({
+                        title: "❌ Evolution Erro",
+                        description: error.message,
+                        variant: "destructive",
+                      });
+                    } else if (data?.ok) {
+                      toast({
+                        title: "✅ Evolution OK",
+                        description: `Diagnóstico completo em ${data.totalMs}ms`,
+                      });
+                    } else {
+                      // Show detailed error from diagnostic
+                      const failedSteps = Object.entries(data?.steps || {})
+                        .filter(([_, step]: [string, any]) => !step.ok)
+                        .map(([name, step]: [string, any]) => `${name}: ${step.status} - ${step.error}`)
+                        .join('; ');
+                      
+                      toast({
+                        title: "❌ Evolution Falha",
+                        description: failedSteps || "Diagnóstico falhou",
+                        variant: "destructive",
+                      });
+                    }
                   } catch (e: any) {
                     toast({
                       title: "❌ Evolution Erro",
@@ -214,7 +245,14 @@ const Dashboard = () => {
                     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
                       body: { action: "list_instances" },
                     });
-                    console.log("Evolution test:", { data, error });
+                    console.log("Evolution raw test:", { data, error });
+                    
+                    // Show raw JSON in modal/alert for debugging
+                    const rawResponse = JSON.stringify({ data, error }, null, 2);
+                    if (window.confirm(`Raw Response:\n\n${rawResponse}\n\nCopy to clipboard?`)) {
+                      navigator.clipboard?.writeText(rawResponse);
+                    }
+                    
                     toast({
                       title: error ? "❌ Evolution Falha" : "✅ Evolution OK",
                       description: error?.message || `Instâncias: ${data?.instances?.length || 0}`,

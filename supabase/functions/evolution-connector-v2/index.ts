@@ -13,7 +13,8 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-const evoUrl = (p: string) => `${EVOLUTION_BASE_URL.replace(/\/$/, "")}${p}`;
+const BASE = EVOLUTION_BASE_URL.replace(/\/$/, "");
+const evoUrl = (p: string) => `${BASE}${p}`;
 const instanceNameFor = (lineId: string) => `evo_line_${lineId}`;
 
 function J(data: unknown, status = 200) {
@@ -25,8 +26,20 @@ async function evo(path: string, init?: RequestInit) {
     ...init,
     headers: { "Content-Type": "application/json", apikey: EVOLUTION_API_KEY, ...(init?.headers || {}) },
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(typeof data === "object" ? JSON.stringify(data) : String(data));
+  const text = await res.text().catch(() => "");
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  
+  if (!res.ok) {
+    const error = new Error(typeof data === "object" ? JSON.stringify(data) : String(data));
+    (error as any).status = res.status;
+    (error as any).body = data;
+    throw error;
+  }
   return data;
 }
 
@@ -39,6 +52,56 @@ serve(async (req) => {
     const { action, lineId, instanceId, number, to, text } = body;
 
     console.log(JSON.stringify({category: 'EVO', action, lineId, instanceId, timestamp: new Date().toISOString()}));
+
+    // Diagnostic action
+    if (action === "diag") {
+      const startTime = Date.now();
+      const steps: any = {};
+      let overallOk = true;
+
+      // Test fetchInstances
+      try {
+        const start = Date.now();
+        await evo(`/instance/fetchInstances`, { method: "GET" });
+        steps.fetchInstances = { ok: true, status: 200, ms: Date.now() - start };
+      } catch (e: any) {
+        steps.fetchInstances = { ok: false, status: e.status || 500, ms: Date.now() - startTime, error: String(e) };
+        overallOk = false;
+      }
+
+      // Test create (with unique name)
+      const diagName = `evo_diag_${Date.now()}`;
+      try {
+        const start = Date.now();
+        await evo(`/instance/create`, { 
+          method: "POST", 
+          body: JSON.stringify({ instanceName: diagName, integration: "WHATSAPP_BAILEYS" }) 
+        });
+        steps.create = { ok: true, status: 200, ms: Date.now() - start };
+      } catch (e: any) {
+        const isAlreadyExists = /exist|already/i.test(String(e));
+        steps.create = { 
+          ok: isAlreadyExists, 
+          status: e.status || 500, 
+          ms: Date.now() - startTime, 
+          error: String(e),
+          note: isAlreadyExists ? "Already exists (expected)" : undefined
+        };
+        if (!isAlreadyExists) overallOk = false;
+      }
+
+      // Test connectionState
+      try {
+        const start = Date.now();
+        await evo(`/instance/connectionState/${encodeURIComponent(diagName)}`, { method: "GET" });
+        steps.connectionState = { ok: true, status: 200, ms: Date.now() - start };
+      } catch (e: any) {
+        steps.connectionState = { ok: false, status: e.status || 500, ms: Date.now() - startTime, error: String(e) };
+        overallOk = false;
+      }
+
+      return J({ ok: overallOk, steps, totalMs: Date.now() - startTime });
+    }
 
     // 1) Health / Lista
     if (action === "list_instances") {
@@ -117,8 +180,14 @@ serve(async (req) => {
     }
 
     return J({ ok: false, error: "unknown_action" }, 400);
-  } catch (e) {
+  } catch (e: any) {
     console.error("Evolution connector error:", e);
-    return J({ ok: false, error: String(e) }, 500);
+    const status = e.status || 500;
+    return J({ 
+      ok: false, 
+      statusCode: status,
+      error: String(e), 
+      details: e.body || null 
+    }, status);
   }
 });
