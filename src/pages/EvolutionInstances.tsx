@@ -33,8 +33,9 @@ export default function EvolutionInstances() {
       
       // Load connection states for each instance
       for (const instance of instanceList) {
-        if (instance.instanceName) {
-          const lineId = instance.instanceName.replace('evo_line_', '');
+        const instName = instance.instanceName || instance.instance?.instanceName;
+        if (instName) {
+          const lineId = instName.replace('evo_line_', '');
           checkConnectionState(lineId);
         }
       }
@@ -332,7 +333,8 @@ export default function EvolutionInstances() {
 
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {instances.map((instance) => {
-            const lineId = instance.instanceName?.replace('evo_line_', '') || instance.id;
+            const instName = instance.instanceName || instance.instance?.instanceName;
+            const lineId = (instName?.replace('evo_line_', '')) || instance.id;
             const state = connectionStates[lineId] || "unknown";
             
             return (
@@ -340,7 +342,7 @@ export default function EvolutionInstances() {
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
                     <Link to={`/evolution/instances/${instance.id}`} className="hover:text-primary">
-                      {instance.instanceName || instance.id}
+                      {(instance.instanceName || instance.instance?.instanceName) || instance.id}
                     </Link>
                     <span className={`text-sm ${getStatusColor(state)}`}>
                       {state}
@@ -374,7 +376,7 @@ export default function EvolutionInstances() {
                         className="flex-1 border rounded px-2 py-1 text-sm"
                         onChange={(e) => {
                           if (e.target.value) {
-                            bindToChannel(instance.instanceName || instance.id, e.target.value);
+                            bindToChannel((instance.instanceName || instance.instance?.instanceName) || instance.id, e.target.value);
                           }
                         }}
                       >
@@ -396,11 +398,11 @@ export default function EvolutionInstances() {
                   </div>
 
                   {/* QR Code display */}
-                  {qrCodes[instance.instanceName?.replace('evo_line_', '') || instance.id] && (
+                  {qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id] && (
                     <div className="mt-4 p-4 border rounded bg-white">
                       <p className="text-sm font-medium mb-2">Escaneie este QR Code:</p>
                       <img 
-                        src={qrCodes[instance.instanceName?.replace('evo_line_', '') || instance.id]} 
+                        src={qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id]} 
                         alt="QR Code"
                         className="w-48 h-48 mx-auto border"
                       />

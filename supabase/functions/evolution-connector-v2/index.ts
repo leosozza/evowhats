@@ -185,7 +185,7 @@ serve(async (req) => {
         try {
           await evo(`/instance/create`, { 
             method: "POST", 
-            body: JSON.stringify({ instanceName: diagName, integration: "WHATSAPP_BAILEYS" }) 
+            body: JSON.stringify({ instanceName: diagName, integration: "WHATSAPP-BAILEYS" }) 
           });
           steps.create = { ok: true, status: 200, ms: Date.now() - createStart };
         } catch (e: any) {
@@ -235,7 +235,7 @@ serve(async (req) => {
       if (!lineId) return J({ ok: false, error: "missing lineId" }, 400);
       const name = instanceNameFor(String(lineId));
       try {
-        await evo(`/instance/create`, { method: "POST", body: JSON.stringify({ instanceName: name, integration: "WHATSAPP_BAILEYS" }) });
+        await evo(`/instance/create`, { method: "POST", body: JSON.stringify({ instanceName: name, integration: "WHATSAPP-BAILEYS" }) });
       } catch (e) {
         // aceitar "já existe"
         if (!/exist|already/i.test(String(e))) throw e;
@@ -290,7 +290,7 @@ serve(async (req) => {
     if (action === "test_send") {
       if (!lineId || !to) return J({ ok: false, error: "missing lineId/to" }, 400);
       const name = instanceNameFor(String(lineId));
-      const messageBody = { number: String(to), text: String(text ?? "Ping de teste") };
+      const messageBody = { number: String(to), textMessage: { text: String(text ?? "Ping de teste") } };
       try { 
         await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(messageBody) }); 
       } catch { 
