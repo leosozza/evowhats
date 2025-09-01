@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Activity } from "lucide-react";
+import { Activity, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  FunctionsHttpError,
-  FunctionsRelayError,
-  FunctionsFetchError,
-} from '@supabase/supabase-js';
+import { evolutionApi, EvolutionApiError } from "@/lib/evolutionApi";
 
 interface APIStatus {
   evolutionApi: boolean;
@@ -24,34 +20,24 @@ const Dashboard = () => {
 
   const checkEvolutionApi = async () => {
     try {
-      const evolutionCheck = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "diag" },
-      });
+      const result = await evolutionApi.diagnostic();
       
-      console.log("Evolution API diagnostic:", evolutionCheck);
-
-      const evolutionOk = !evolutionCheck.error && evolutionCheck.data?.ok === true;
-
-      setApiStatus(prev => ({
-        ...prev,
-        evolutionApi: evolutionOk,
-      }));
-
-      if (evolutionOk) {
+      const isHealthy = result?.ok === true;
+      setApiStatus(prev => ({ ...prev, evolutionApi: isHealthy }));
+      
+      if (isHealthy) {
         toast({
           title: "✅ API Evolution",
-          description: `API funcional com ${evolutionCheck.data?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
+          description: `API funcional com ${result?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
         });
       } else {
         let errorMsg = "API Evolution não está funcional";
         
-        if (evolutionCheck.error) {
-          errorMsg = `Erro de conexão: ${evolutionCheck.error.message}`;
-        } else if (evolutionCheck.data?.steps) {
-          if (!evolutionCheck.data.steps.config?.ok) {
+        if (result?.steps) {
+          if (!result.steps.config?.ok) {
             errorMsg = "Configuração incompleta: verifique EVOLUTION_BASE_URL e EVOLUTION_API_KEY";
           } else {
-            const failedStep = Object.entries(evolutionCheck.data.steps).find(([_, step]: [string, any]) => !step.ok);
+            const failedStep = Object.entries(result.steps).find(([_, step]: [string, any]) => !step.ok);
             if (failedStep) {
               const [stepName, stepData] = failedStep as [string, any];
               errorMsg = `Falha em ${stepName}: ${stepData.error || `Status ${stepData.status}`}`;
@@ -60,8 +46,8 @@ const Dashboard = () => {
               }
             }
           }
-        } else if (evolutionCheck.data?.error) {
-          errorMsg = evolutionCheck.data.error;
+        } else if (result?.error) {
+          errorMsg = result.error;
         }
         
         toast({
@@ -72,34 +58,22 @@ const Dashboard = () => {
       }
     } catch (error: any) {
       console.error("Error checking Evolution API:", error);
+      setApiStatus(prev => ({ ...prev, evolutionApi: false }));
       
-      let errorDetails = "";
-      if (error instanceof FunctionsHttpError) {
-        try {
-          const details = await error.context.json();
-          errorDetails = typeof details === 'string' ? details : JSON.stringify(details);
-          console.error('[HTTP ERROR]', error.message, details);
-        } catch {
-          try {
-            errorDetails = await error.context.text();
-          } catch {
-            errorDetails = error.message;
-          }
-        }
-      } else if (error instanceof FunctionsRelayError) {
-        errorDetails = `Relay error: ${error.message}`;
-        console.error('[RELAY ERROR]', error.message);
-      } else if (error instanceof FunctionsFetchError) {
-        errorDetails = `Fetch/CORS error: ${error.message}`;
-        console.error('[FETCH ERROR]', error.message);
+      let errorMsg = "Erro desconhecido";
+      let details = "";
+      
+      if (error instanceof EvolutionApiError) {
+        errorMsg = error.message;
+        details = error.details ? `Status: ${error.statusCode}` : "";
+        if (error.url) details += ` URL: ${error.url}`;
       } else {
-        errorDetails = String(error);
-        console.error('[UNKNOWN ERROR]', error);
+        errorMsg = error.message || String(error);
       }
       
       toast({
         title: "❌ Erro Evolution",
-        description: errorDetails,
+        description: `${errorMsg}${details ? ` (${details})` : ''}`,
         variant: "destructive",
       });
     }
@@ -215,46 +189,34 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-                      body: { action: "diag" },
-                    });
-                    console.log("Evolution diagnostic:", { data, error });
+                    const result = await evolutionApi.diagnostic();
+                    console.log("Evolution diagnostic:", result);
                     
-                    if (error) {
-                      toast({
-                        title: "❌ Evolution Erro",
-                        description: error.message,
-                        variant: "destructive",
-                      });
-                    } else if (data?.ok) {
-                      toast({
-                        title: "✅ Evolution OK",
-                        description: `Diagnóstico completo em ${data.totalMs}ms`,
-                      });
-                    } else {
-                      // Show detailed error from diagnostic
-                      const failedSteps = Object.entries(data?.steps || {})
-                        .filter(([_, step]: [string, any]) => !step.ok)
-                        .map(([name, step]: [string, any]) => `${name}: ${step.status} - ${step.error}`)
-                        .join('; ');
-                      
-                      toast({
-                        title: "❌ Evolution Falha",
-                        description: failedSteps || "Diagnóstico falhou",
-                        variant: "destructive",
-                      });
-                    }
+                    const diagnosticText = JSON.stringify(result, null, 2);
+                    
+                    toast({
+                      title: result?.ok ? "✅ Evolution OK" : "❌ Evolution Falha",
+                      description: result?.ok 
+                        ? `Diagnóstico completo em ${result.totalMs}ms` 
+                        : "Ver console para detalhes",
+                      variant: result?.ok ? "default" : "destructive",
+                    });
+                    
+                    // Show alert with full details
+                    alert(`Diagnóstico Evolution API:\n\n${diagnosticText}`);
                   } catch (e: any) {
+                    console.error("Erro no diagnóstico:", e);
                     toast({
                       title: "❌ Evolution Erro",
-                      description: e.message,
+                      description: e.message || "Erro ao executar diagnóstico",
                       variant: "destructive",
                     });
                   }
                 }}
                 className="w-full"
               >
-                Teste Direto
+                <Search className="h-4 w-4 mr-2" />
+                Diagnóstico
               </Button>
             </div>
           </CardContent>
@@ -301,26 +263,38 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-                      body: { action: "list_instances" },
+                    const result = await evolutionApi.listInstances();
+                    console.log("Evolution test result:", result);
+                    
+                    const instances = result?.instances || [];
+                    toast({
+                      title: "✅ Evolution OK",
+                      description: `${instances.length} instâncias encontradas`,
+                      variant: "default",
                     });
-                    console.log("Evolution raw test:", { data, error });
                     
                     // Show raw JSON in modal/alert for debugging
-                    const rawResponse = JSON.stringify({ data, error }, null, 2);
+                    const rawResponse = JSON.stringify(result, null, 2);
                     if (window.confirm(`Raw Response:\n\n${rawResponse}\n\nCopy to clipboard?`)) {
                       navigator.clipboard?.writeText(rawResponse);
                     }
+                  } catch (e: any) {
+                    console.error("Erro no teste Evolution:", e);
+                    
+                    let errorMsg = "Erro desconhecido";
+                    let details = "";
+                    
+                    if (e instanceof EvolutionApiError) {
+                      errorMsg = e.message;
+                      details = `Status: ${e.statusCode}`;
+                      if (e.details) details += ` - ${JSON.stringify(e.details)}`;
+                    } else {
+                      errorMsg = e.message || String(e);
+                    }
                     
                     toast({
-                      title: error ? "❌ Evolution Falha" : "✅ Evolution OK",
-                      description: error?.message || `Instâncias: ${data?.instances?.length || 0}`,
-                      variant: error ? "destructive" : "default",
-                    });
-                  } catch (e: any) {
-                    toast({
                       title: "❌ Evolution Erro",
-                      description: e.message,
+                      description: `${errorMsg}${details ? ` (${details})` : ''}`,
                       variant: "destructive",
                     });
                   }
