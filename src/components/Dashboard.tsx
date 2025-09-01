@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Activity } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  FunctionsHttpError,
+  FunctionsRelayError,
+  FunctionsFetchError,
+} from '@supabase/supabase-js';
 
 interface APIStatus {
   evolutionApi: boolean;
@@ -67,9 +72,34 @@ const Dashboard = () => {
       }
     } catch (error: any) {
       console.error("Error checking Evolution API:", error);
+      
+      let errorDetails = "";
+      if (error instanceof FunctionsHttpError) {
+        try {
+          const details = await error.context.json();
+          errorDetails = typeof details === 'string' ? details : JSON.stringify(details);
+          console.error('[HTTP ERROR]', error.message, details);
+        } catch {
+          try {
+            errorDetails = await error.context.text();
+          } catch {
+            errorDetails = error.message;
+          }
+        }
+      } else if (error instanceof FunctionsRelayError) {
+        errorDetails = `Relay error: ${error.message}`;
+        console.error('[RELAY ERROR]', error.message);
+      } else if (error instanceof FunctionsFetchError) {
+        errorDetails = `Fetch/CORS error: ${error.message}`;
+        console.error('[FETCH ERROR]', error.message);
+      } else {
+        errorDetails = String(error);
+        console.error('[UNKNOWN ERROR]', error);
+      }
+      
       toast({
         title: "❌ Erro Evolution",
-        description: error.message,
+        description: errorDetails,
         variant: "destructive",
       });
     }
