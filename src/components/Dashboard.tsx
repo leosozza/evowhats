@@ -17,29 +17,20 @@ const Dashboard = () => {
     bitrixApi: false,
   });
 
-  const checkApiStatus = async () => {
+  const checkEvolutionApi = async () => {
     try {
-      // Check Evolution API with diagnostic
       const evolutionCheck = await supabase.functions.invoke("evolution-connector-v2", {
         body: { action: "diag" },
       });
       
       console.log("Evolution API diagnostic:", evolutionCheck);
-      
-      // Check Bitrix API with token refresh
-      const bitrixCheck = await supabase.functions.invoke("bitrix-token-refresh", {
-        body: {},
-      });
-      
-      console.log("Bitrix API response:", bitrixCheck);
 
       const evolutionOk = !evolutionCheck.error && evolutionCheck.data?.ok === true;
-      const bitrixOk = !bitrixCheck.error && bitrixCheck.data?.ok === true;
 
-      setApiStatus({
+      setApiStatus(prev => ({
+        ...prev,
         evolutionApi: evolutionOk,
-        bitrixApi: bitrixOk,
-      });
+      }));
 
       if (evolutionOk) {
         toast({
@@ -50,10 +41,8 @@ const Dashboard = () => {
         let errorMsg = "API Evolution não está funcional";
         
         if (evolutionCheck.error) {
-          // Network or function error
           errorMsg = `Erro de conexão: ${evolutionCheck.error.message}`;
         } else if (evolutionCheck.data?.steps) {
-          // Diagnostic step failure
           if (!evolutionCheck.data.steps.config?.ok) {
             errorMsg = "Configuração incompleta: verifique EVOLUTION_BASE_URL e EVOLUTION_API_KEY";
           } else {
@@ -76,6 +65,30 @@ const Dashboard = () => {
           variant: "destructive",
         });
       }
+    } catch (error: any) {
+      console.error("Error checking Evolution API:", error);
+      toast({
+        title: "❌ Erro Evolution",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const checkBitrixApi = async () => {
+    try {
+      const bitrixCheck = await supabase.functions.invoke("bitrix-token-refresh", {
+        body: {},
+      });
+      
+      console.log("Bitrix API response:", bitrixCheck);
+
+      const bitrixOk = !bitrixCheck.error && bitrixCheck.data?.ok === true;
+
+      setApiStatus(prev => ({
+        ...prev,
+        bitrixApi: bitrixOk,
+      }));
 
       if (bitrixOk) {
         toast({
@@ -90,13 +103,17 @@ const Dashboard = () => {
         });
       }
     } catch (error: any) {
-      console.error("Error checking API status:", error);
+      console.error("Error checking Bitrix API:", error);
       toast({
-        title: "❌ Erro",
+        title: "❌ Erro Bitrix",
         description: error.message,
         variant: "destructive",
       });
     }
+  };
+
+  const checkApiStatus = async () => {
+    await Promise.all([checkEvolutionApi(), checkBitrixApi()]);
   };
 
   useEffect(() => {
@@ -159,7 +176,7 @@ const Dashboard = () => {
               <Button 
                 size="sm" 
                 variant="outline" 
-                onClick={checkApiStatus}
+                onClick={checkEvolutionApi}
                 className="w-full"
               >
                 Testar Novamente
@@ -229,7 +246,7 @@ const Dashboard = () => {
               <Button 
                 size="sm" 
                 variant="outline" 
-                onClick={checkApiStatus}
+                onClick={checkBitrixApi}
                 className="w-full"
               >
                 Testar Novamente
