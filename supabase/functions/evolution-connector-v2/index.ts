@@ -2,10 +2,21 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const EVOLUTION_BASE_URL = Deno.env.get("EVOLUTION_BASE_URL")!; // ex: https://api.evolution-api.com
-const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY")!;
+// Get environment variables with fallbacks and validation
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const EVOLUTION_BASE_URL = Deno.env.get("EVOLUTION_BASE_URL"); // ex: https://api.evolution-api.com
+const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
+
+// Validate required environment variables
+if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !EVOLUTION_BASE_URL || !EVOLUTION_API_KEY) {
+  console.error("Missing required environment variables:", {
+    SUPABASE_URL: !!SUPABASE_URL,
+    SERVICE_ROLE_KEY: !!SERVICE_ROLE_KEY,
+    EVOLUTION_BASE_URL: !!EVOLUTION_BASE_URL,
+    EVOLUTION_API_KEY: !!EVOLUTION_API_KEY
+  });
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -13,94 +24,204 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-const BASE = EVOLUTION_BASE_URL.replace(/\/$/, "");
+const BASE = EVOLUTION_BASE_URL ? EVOLUTION_BASE_URL.replace(/\/$/, "") : "";
 const evoUrl = (p: string) => `${BASE}${p}`;
 const instanceNameFor = (lineId: string) => `evo_line_${lineId}`;
 
 function J(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(data), { 
+    status, 
+    headers: { ...CORS, "Content-Type": "application/json" } 
+  });
 }
 
-async function evo(path: string, init?: RequestInit) {
-  const res = await fetch(evoUrl(path), {
-    ...init,
-    headers: { "Content-Type": "application/json", apikey: EVOLUTION_API_KEY, ...(init?.headers || {}) },
-  });
-  const text = await res.text().catch(() => "");
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-  
-  if (!res.ok) {
-    const error = new Error(typeof data === "object" ? JSON.stringify(data) : String(data));
-    (error as any).status = res.status;
-    (error as any).body = data;
+async function evo(path: string, init?: RequestInit): Promise<any> {
+  if (!EVOLUTION_BASE_URL || !EVOLUTION_API_KEY) {
+    const error = new Error("Evolution API configuration missing");
+    (error as any).status = 500;
+    (error as any).body = { error: "EVOLUTION_BASE_URL or EVOLUTION_API_KEY not configured" };
     throw error;
   }
-  return data;
+
+  try {
+    const url = evoUrl(path);
+    console.log(JSON.stringify({category: 'EVO_REQUEST', url, method: init?.method || 'GET'}));
+    
+    const res = await fetch(url, {
+      ...init,
+      headers: { 
+        "Content-Type": "application/json", 
+        apikey: EVOLUTION_API_KEY, 
+        ...(init?.headers || {}) 
+      },
+    });
+    
+    const text = await res.text().catch(() => "");
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+    
+    console.log(JSON.stringify({
+      category: 'EVO_RESPONSE', 
+      status: res.status, 
+      ok: res.ok,
+      url,
+      dataSize: text.length
+    }));
+    
+    if (!res.ok) {
+      const error = new Error(`Evolution API error: ${res.status} ${res.statusText}`);
+      (error as any).status = res.status;
+      (error as any).body = data;
+      (error as any).url = url;
+      throw error;
+    }
+    
+    return data;
+  } catch (fetchError: any) {
+    if (fetchError.status) {
+      throw fetchError; // Re-throw errors with status
+    }
+    
+    // Network or other fetch errors
+    const error = new Error(`Network error: ${String(fetchError)}`);
+    (error as any).status = 500;
+    (error as any).body = { error: "Failed to connect to Evolution API", details: String(fetchError) };
+    throw error;
+  }
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+  // Always handle CORS
+  if (req.method === "OPTIONS") {
+    return new Response(null, { 
+      status: 200,
+      headers: CORS 
+    });
+  }
+
+  // Validate environment before proceeding
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    return J({ 
+      ok: false, 
+      error: "Supabase configuration missing",
+      statusCode: 500 
+    }, 500);
+  }
+
   const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
+  let body: any = {};
+  
   try {
-    const body = await req.json().catch(() => ({}));
+    body = await req.json().catch(() => ({}));
     const { action, lineId, instanceId, number, to, text } = body;
 
-    console.log(JSON.stringify({category: 'EVO', action, lineId, instanceId, timestamp: new Date().toISOString()}));
+    console.log(JSON.stringify({
+      category: 'EVO', 
+      action, 
+      lineId, 
+      instanceId, 
+      timestamp: new Date().toISOString(),
+      hasEvolutionConfig: !!(EVOLUTION_BASE_URL && EVOLUTION_API_KEY)
+    }));
 
-    // Diagnostic action
+    // Diagnostic action - comprehensive health check
     if (action === "diag") {
       const startTime = Date.now();
       const steps: any = {};
       let overallOk = true;
 
-      // Test fetchInstances
-      try {
-        const start = Date.now();
-        await evo(`/instance/fetchInstances`, { method: "GET" });
-        steps.fetchInstances = { ok: true, status: 200, ms: Date.now() - start };
-      } catch (e: any) {
-        steps.fetchInstances = { ok: false, status: e.status || 500, ms: Date.now() - startTime, error: String(e) };
+      // Check configuration first
+      steps.config = {
+        ok: !!(EVOLUTION_BASE_URL && EVOLUTION_API_KEY),
+        status: !!(EVOLUTION_BASE_URL && EVOLUTION_API_KEY) ? 200 : 500,
+        ms: 0,
+        details: {
+          hasBaseUrl: !!EVOLUTION_BASE_URL,
+          hasApiKey: !!EVOLUTION_API_KEY,
+          baseUrl: EVOLUTION_BASE_URL ? `${EVOLUTION_BASE_URL.substring(0, 20)}...` : "missing"
+        }
+      };
+      
+      if (!steps.config.ok) {
         overallOk = false;
-      }
-
-      // Test create (with unique name)
-      const diagName = `evo_diag_${Date.now()}`;
-      try {
-        const start = Date.now();
-        await evo(`/instance/create`, { 
-          method: "POST", 
-          body: JSON.stringify({ instanceName: diagName, integration: "WHATSAPP_BAILEYS" }) 
+        return J({ 
+          ok: overallOk, 
+          steps, 
+          totalMs: Date.now() - startTime,
+          error: "Configuration missing"
         });
-        steps.create = { ok: true, status: 200, ms: Date.now() - start };
-      } catch (e: any) {
-        const isAlreadyExists = /exist|already/i.test(String(e));
-        steps.create = { 
-          ok: isAlreadyExists, 
-          status: e.status || 500, 
-          ms: Date.now() - startTime, 
-          error: String(e),
-          note: isAlreadyExists ? "Already exists (expected)" : undefined
-        };
-        if (!isAlreadyExists) overallOk = false;
       }
 
-      // Test connectionState
+      // Test fetchInstances
+      let start = Date.now();
       try {
-        const start = Date.now();
-        await evo(`/instance/connectionState/${encodeURIComponent(diagName)}`, { method: "GET" });
-        steps.connectionState = { ok: true, status: 200, ms: Date.now() - start };
+        const result = await evo(`/instance/fetchInstances`, { method: "GET" });
+        steps.fetchInstances = { 
+          ok: true, 
+          status: 200, 
+          ms: Date.now() - start,
+          instanceCount: Array.isArray(result) ? result.length : 0
+        };
       } catch (e: any) {
-        steps.connectionState = { ok: false, status: e.status || 500, ms: Date.now() - startTime, error: String(e) };
+        steps.fetchInstances = { 
+          ok: false, 
+          status: e.status || 500, 
+          ms: Date.now() - start, 
+          error: e.message || String(e),
+          url: e.url || "unknown"
+        };
         overallOk = false;
       }
 
-      return J({ ok: overallOk, steps, totalMs: Date.now() - startTime });
+      // Test create (with unique name) - only if fetchInstances worked
+      if (steps.fetchInstances.ok) {
+        const diagName = `evo_diag_${Date.now()}`;
+        let createStart = Date.now();
+        try {
+          await evo(`/instance/create`, { 
+            method: "POST", 
+            body: JSON.stringify({ instanceName: diagName, integration: "WHATSAPP_BAILEYS" }) 
+          });
+          steps.create = { ok: true, status: 200, ms: Date.now() - createStart };
+        } catch (e: any) {
+          const isAlreadyExists = /exist|already/i.test(String(e));
+          steps.create = { 
+            ok: isAlreadyExists, 
+            status: e.status || 500, 
+            ms: Date.now() - createStart, 
+            error: e.message || String(e),
+            note: isAlreadyExists ? "Already exists (expected)" : undefined
+          };
+          if (!isAlreadyExists) overallOk = false;
+        }
+
+        // Test connectionState
+        let connectionStart = Date.now();
+        try {
+          await evo(`/instance/connectionState/${encodeURIComponent(diagName)}`, { method: "GET" });
+          steps.connectionState = { ok: true, status: 200, ms: Date.now() - connectionStart };
+        } catch (e: any) {
+          steps.connectionState = { 
+            ok: false, 
+            status: e.status || 500, 
+            ms: Date.now() - connectionStart, 
+            error: e.message || String(e)
+          };
+          overallOk = false;
+        }
+      }
+
+      return J({ 
+        ok: overallOk, 
+        steps, 
+        totalMs: Date.now() - startTime,
+        evolutionBaseUrl: EVOLUTION_BASE_URL
+      });
     }
 
     // 1) Health / Lista
@@ -169,25 +290,36 @@ serve(async (req) => {
     if (action === "test_send") {
       if (!lineId || !to) return J({ ok: false, error: "missing lineId/to" }, 400);
       const name = instanceNameFor(String(lineId));
-      const body = { number: String(to), text: String(text ?? "Ping de teste") };
+      const messageBody = { number: String(to), text: String(text ?? "Ping de teste") };
       try { 
-        await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(body) }); 
+        await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(messageBody) }); 
       } catch { 
         await new Promise(r => setTimeout(r, 1000)); 
-        await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(body) }); 
+        await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(messageBody) }); 
       }
       return J({ ok: true, instanceName: name });
     }
 
-    return J({ ok: false, error: "unknown_action" }, 400);
+    return J({ ok: false, error: "unknown_action", availableActions: [
+      "diag", "list_instances", "ensure_line_session", "start_session_for_line", 
+      "get_status_for_line", "get_qr_for_line", "bind_line", "test_send"
+    ] }, 400);
   } catch (e: any) {
     console.error("Evolution connector error:", e);
     const status = e.status || 500;
-    return J({ 
+    
+    // Enhanced error response with more debugging info
+    const errorResponse = {
       ok: false, 
       statusCode: status,
-      error: String(e), 
-      details: e.body || null 
-    }, status);
+      error: e.message || String(e), 
+      details: e.body || null,
+      timestamp: new Date().toISOString(),
+      action: body.action || "unknown"
+    };
+    
+    if (e.url) errorResponse.url = e.url;
+    
+    return J(errorResponse, status);
   }
 });

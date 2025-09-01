@@ -44,18 +44,30 @@ const Dashboard = () => {
       if (evolutionOk) {
         toast({
           title: "✅ API Evolution",
-          description: "API Evolution está funcional",
+          description: `API funcional com ${evolutionCheck.data?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
         });
       } else {
         let errorMsg = "API Evolution não está funcional";
-        if (evolutionCheck.data?.steps) {
-          const failedStep = Object.entries(evolutionCheck.data.steps).find(([_, step]: [string, any]) => !step.ok);
-          if (failedStep) {
-            const [stepName, stepData] = failedStep as [string, any];
-            errorMsg = `Falha em ${stepName}: Status ${stepData.status} - ${stepData.error || 'Erro desconhecido'}`;
+        
+        if (evolutionCheck.error) {
+          // Network or function error
+          errorMsg = `Erro de conexão: ${evolutionCheck.error.message}`;
+        } else if (evolutionCheck.data?.steps) {
+          // Diagnostic step failure
+          if (!evolutionCheck.data.steps.config?.ok) {
+            errorMsg = "Configuração incompleta: verifique EVOLUTION_BASE_URL e EVOLUTION_API_KEY";
+          } else {
+            const failedStep = Object.entries(evolutionCheck.data.steps).find(([_, step]: [string, any]) => !step.ok);
+            if (failedStep) {
+              const [stepName, stepData] = failedStep as [string, any];
+              errorMsg = `Falha em ${stepName}: ${stepData.error || `Status ${stepData.status}`}`;
+              if (stepData.url) {
+                errorMsg += ` (URL: ${stepData.url})`;
+              }
+            }
           }
-        } else if (evolutionCheck.error?.message) {
-          errorMsg = evolutionCheck.error.message;
+        } else if (evolutionCheck.data?.error) {
+          errorMsg = evolutionCheck.data.error;
         }
         
         toast({
