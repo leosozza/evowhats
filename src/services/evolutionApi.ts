@@ -28,7 +28,7 @@ export async function testEvolutionConnection(
 ): Promise<ConnectionTest> {
   try {
     // Test connection via our edge function
-    const response = await supabase.functions.invoke('evolution-connector', {
+    const response = await supabase.functions.invoke('evolution-connector-v2', {
       body: {
         action: 'get_status',
         instanceName
@@ -79,7 +79,7 @@ export async function testEvolutionConnection(
 
 export async function getMultiInstanceStatus(): Promise<MultiInstanceStatus> {
   try {
-    const response = await supabase.functions.invoke('evolution-connector', {
+    const response = await supabase.functions.invoke('evolution-connector-v2', {
       body: {
         action: 'get_all_instances'
       }
@@ -118,7 +118,7 @@ export async function createInstanceForLine(lineId: string, lineName: string): P
     // Generate instance name based on line
     const instanceName = `bitrix_line_${lineId}`;
     
-    const response = await supabase.functions.invoke('evolution-connector', {
+    const response = await supabase.functions.invoke('evolution-connector-v2', {
       body: {
         action: 'create_instance',
         instanceName,
@@ -157,7 +157,7 @@ export async function createInstanceForLine(lineId: string, lineName: string): P
 
 export async function getInstanceQRCode(instanceName?: string): Promise<{ success: boolean; qrCode?: string; message: string }> {
   try {
-    const response = await supabase.functions.invoke('evolution-connector', {
+    const response = await supabase.functions.invoke('evolution-connector-v2', {
       body: {
         action: 'get_qr',
         instanceName
@@ -194,7 +194,7 @@ export async function getInstanceQRCode(instanceName?: string): Promise<{ succes
 
 export async function startEvolutionSession(instanceName?: string): Promise<{ success: boolean; message: string }> {
   try {
-    const response = await supabase.functions.invoke('evolution-connector', {
+    const response = await supabase.functions.invoke('evolution-connector-v2', {
       body: {
         action: 'start_session',
         instanceName
@@ -230,7 +230,7 @@ export async function startEvolutionSession(instanceName?: string): Promise<{ su
 
 export async function deleteInstance(instanceName: string): Promise<{ success: boolean; message: string }> {
   try {
-    const response = await supabase.functions.invoke('evolution-connector', {
+    const response = await supabase.functions.invoke('evolution-connector-v2', {
       body: {
         action: 'delete_instance',
         instanceName

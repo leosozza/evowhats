@@ -119,19 +119,20 @@ const Dashboard = () => {
       <section className="mb-8">
         <h2 className="text-2xl font-semibold mb-4">Status da API</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>API Evolution</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-500 mb-4">
-                Status:{" "}
-                {apiStatus.evolutionApi ? (
-                  <span className="text-green-500">Funcional</span>
-                ) : (
-                  <span className="text-red-500">Não Funcional</span>
-                )}
-              </p>
+        <Card>
+          <CardHeader>
+            <CardTitle>API Evolution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-500 mb-4">
+              Status:{" "}
+              {apiStatus.evolutionApi ? (
+                <span className="text-green-500">Funcional</span>
+              ) : (
+                <span className="text-red-500">Não Funcional</span>
+              )}
+            </p>
+            <div className="space-y-2">
               <Button 
                 size="sm" 
                 variant="outline" 
@@ -140,8 +141,34 @@ const Dashboard = () => {
               >
                 Testar Novamente
               </Button>
-            </CardContent>
-          </Card>
+              <Button 
+                size="sm" 
+                onClick={async () => {
+                  try {
+                    const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+                      body: { action: "list_instances" },
+                    });
+                    console.log("Evolution test:", { data, error });
+                    toast({
+                      title: error ? "❌ Evolution Falha" : "✅ Evolution OK",
+                      description: error?.message || `Instâncias: ${data?.instances?.length || 0}`,
+                      variant: error ? "destructive" : "default",
+                    });
+                  } catch (e: any) {
+                    toast({
+                      title: "❌ Evolution Erro",
+                      description: e.message,
+                      variant: "destructive",
+                    });
+                  }
+                }}
+                className="w-full"
+              >
+                Teste Direto
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
           <Card>
             <CardHeader>

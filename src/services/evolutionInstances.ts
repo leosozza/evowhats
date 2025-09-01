@@ -55,7 +55,7 @@ class EvolutionInstanceManager {
 
   // === API REST Evolution via sua edge function ===
   private async evo(action: string, path: string, method = "GET", payload?: any) {
-    const { data, error } = await supabase.functions.invoke('evolution-connector', {
+    const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
       body: { action, path, method, payload }
     });
     if (error) throw error;

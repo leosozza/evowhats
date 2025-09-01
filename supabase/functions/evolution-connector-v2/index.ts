@@ -107,13 +107,18 @@ serve(async (req) => {
       if (!lineId || !to) return J({ ok: false, error: "missing lineId/to" }, 400);
       const name = instanceNameFor(String(lineId));
       const body = { number: String(to), text: String(text ?? "Ping de teste") };
-      try { await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(body) }); }
-      catch { await new Promise(r => setTimeout(r, 1000)); await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(body) }); }
+      try { 
+        await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(body) }); 
+      } catch { 
+        await new Promise(r => setTimeout(r, 1000)); 
+        await evo(`/message/sendText/${encodeURIComponent(name)}`, { method: "POST", body: JSON.stringify(body) }); 
+      }
       return J({ ok: true, instanceName: name });
     }
 
     return J({ ok: false, error: "unknown_action" }, 400);
   } catch (e) {
+    console.error("Evolution connector error:", e);
     return J({ ok: false, error: String(e) }, 500);
   }
 });

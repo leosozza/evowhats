@@ -133,7 +133,7 @@ export async function sendMessage(params: SendMessageParams): Promise<DBMessage>
   // Send message via Evolution API if instance is configured
   if (conversation.evolution_instance) {
     try {
-      const response = await supabase.functions.invoke('evolution-connector', {
+      const response = await supabase.functions.invoke('evolution-connector-v2', {
         body: {
           action: 'proxy',
           path: `/message/sendText/${conversation.evolution_instance}`,

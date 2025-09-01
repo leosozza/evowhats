@@ -97,36 +97,59 @@ export default function EvolutionInstances() {
     const poll = async () => {
       if (!activePolling[lineId]) return;
 
-      const state = await checkConnectionState(lineId);
-      
-      if (state === "connecting") {
-        // Get QR code
-        try {
-          const { data } = await supabase.functions.invoke("evolution-connector-v2", {
-            body: { action: "get_qr_for_line", lineId },
-          });
-          
-          if (data?.qr_base64) {
-            setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${data.qr_base64}` }));
-          }
-        } catch (error) {
-          console.error("Error getting QR:", error);
-        }
+      try {
+        const state = await checkConnectionState(lineId);
         
-        // Continue polling every 4 seconds
-        setTimeout(() => poll(), 4000);
-      } else if (state === "open") {
-        // Connected, stop polling and clear QR
-        setActivePolling(prev => ({ ...prev, [lineId]: false }));
-        setQrCodes(prev => ({ ...prev, [lineId]: "" }));
-        toast({
-          title: "✅ Conectado",
-          description: `Instância ${lineId} conectada com sucesso`,
-        });
-      } else {
-        // Other states, stop polling
-        setActivePolling(prev => ({ ...prev, [lineId]: false }));
-        setQrCodes(prev => ({ ...prev, [lineId]: "" }));
+        if (state === "connecting") {
+          // Get QR code
+          try {
+            const { data } = await supabase.functions.invoke("evolution-connector-v2", {
+              body: { action: "get_qr_for_line", lineId },
+            });
+            
+            if (data?.qr_base64) {
+              setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${data.qr_base64}` }));
+            }
+          } catch (error) {
+            console.error("Error getting QR:", error);
+          }
+          
+          // Continue polling every 4 seconds
+          setTimeout(() => {
+            if (activePolling[lineId]) {
+              poll();
+            }
+          }, 4000);
+        } else if (state === "open") {
+          // Connected, stop polling and clear QR
+          setActivePolling(prev => ({ ...prev, [lineId]: false }));
+          setQrCodes(prev => ({ ...prev, [lineId]: "" }));
+          toast({
+            title: "✅ Conectado",
+            description: `Instância ${lineId} conectada com sucesso`,
+          });
+        } else {
+          // Other states, stop polling after a few retries
+          const retryStates = ["close", "error", "unknown"];
+          if (retryStates.includes(state)) {
+            setTimeout(() => {
+              if (activePolling[lineId]) {
+                poll();
+              }
+            }, 4000);
+          } else {
+            setActivePolling(prev => ({ ...prev, [lineId]: false }));
+            setQrCodes(prev => ({ ...prev, [lineId]: "" }));
+          }
+        }
+      } catch (error) {
+        console.error("Polling error:", error);
+        // Continue polling on error
+        setTimeout(() => {
+          if (activePolling[lineId]) {
+            poll();
+          }
+        }, 4000);
       }
     };
 
