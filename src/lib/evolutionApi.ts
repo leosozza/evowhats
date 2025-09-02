@@ -20,6 +20,13 @@ export class EvolutionApiError extends Error {
  */
 export async function callEvolution(action: string, payload: any = {}) {
   try {
+    console.log(JSON.stringify({
+      category: 'UI',
+      view: 'callEvolution',
+      action,
+      payload: Object.keys(payload)
+    }));
+
     const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
       body: { action, ...payload },
     });

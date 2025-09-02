@@ -30,7 +30,8 @@ async function evo(path: string, init?: RequestInit) {
   
   const go = async (usePrimary: boolean) => {
     console.log(JSON.stringify({
-      category: 'EVO_REQUEST',
+      category: 'EVO',
+      action: 'REQUEST',
       url,
       method: init?.method || 'GET',
       authType: usePrimary ? 'apikey' : 'bearer'
@@ -47,7 +48,8 @@ async function evo(path: string, init?: RequestInit) {
     const text = await res.text().catch(() => "");
     
     console.log(JSON.stringify({
-      category: 'EVO_RESPONSE',
+      category: 'EVO',
+      action: 'RESPONSE',
       status: res.status,
       ok: res.ok,
       url,
@@ -125,133 +127,151 @@ serve(async (req) => {
     return new Response(null, { headers: CORS });
   }
 
-  // Validate environment
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    return ok({
+    // Validate environment
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+      return ok({
+        ok: false,
+        statusCode: 500,
+        error: "Supabase configuration missing"
+      }, 500);
+    }
+
+    const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+    
+    const err = (e: any) => ok({
       ok: false,
-      statusCode: 500,
-      error: "Supabase configuration missing"
-    }, 500);
-  }
+      statusCode: e?.status ?? 500,
+      error: String(e),
+      details: e?.body ?? null,
+      url: e?.url ?? null
+    }, e?.status ?? 500);
 
-  const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-  
-  const err = (e: any) => ok({
-    ok: false,
-    statusCode: e?.status ?? 500,
-    error: String(e),
-    details: e?.body ?? null,
-    url: e?.url ?? null
-  }, e?.status ?? 500);
+    try {
+      const body = await req.json().catch(() => ({}));
+      const { action, lineId, instanceId, to, text, number } = body;
 
-  try {
-    const body = await req.json().catch(() => ({}));
-    const { action, lineId, instanceId, to, text, number } = body;
+      console.log(JSON.stringify({
+        category: 'EVO',
+        action,
+        lineId,
+        instanceId,
+        timestamp: new Date().toISOString(),
+        hasConfig: !!(BASE && KEY)
+      }));
 
-    console.log(JSON.stringify({
-      category: 'EVO_ACTION',
-      action,
-      lineId,
-      instanceId,
-      timestamp: new Date().toISOString(),
-      hasConfig: !!(BASE && KEY)
-    }));
+      // Comprehensive diagnostic - ALWAYS returns 200
+      if (action === "diag") {
+        const steps: any = {};
+        const startTime = Date.now();
 
-    // Comprehensive diagnostic
-    if (action === "diag") {
-      const steps: any = {};
-      const startTime = Date.now();
-
-      // Check configuration
-      steps.config = {
-        ok: !!(BASE && KEY),
-        hasBaseUrl: !!BASE,
-        hasApiKey: !!KEY,
-        baseUrl: BASE ? `${BASE.substring(0, 30)}...` : "missing"
-      };
-
-      if (!steps.config.ok) {
-        return ok({
-          ok: false,
-          steps,
-          totalMs: Date.now() - startTime,
-          error: "Configuration missing"
-        });
-      }
-
-      // Test fetchInstances
-      try {
-        const t = Date.now();
-        const instances = await listCompat();
-        steps.fetchInstances = {
-          ok: true,
-          status: 200,
-          ms: Date.now() - t,
-          instanceCount: Array.isArray(instances) ? instances.length : 0
+        // Check configuration
+        steps.config = {
+          ok: !!(BASE && KEY),
+          hasBaseUrl: !!BASE,
+          hasApiKey: !!KEY,
+          baseUrl: BASE ? `${BASE.substring(0, 30)}...` : "missing"
         };
-      } catch (e: any) {
-        steps.fetchInstances = {
-          ok: false,
-          status: e?.status ?? 500,
-          details: e?.body ?? null,
-          url: e?.url
-        };
-      }
 
-      // Test create instance (only if fetch worked)
-      if (steps.fetchInstances.ok) {
-        const diagName = `evo_diag_${Date.now()}`;
-        try {
-          const t = Date.now();
-          await evo("/instance/create", {
-            method: "POST",
-            body: JSON.stringify({
-              instanceName: diagName,
-              integration: "WHATSAPP-BAILEYS"
-            })
-          });
-          steps.create = {
-            ok: true,
-            status: 200,
-            ms: Date.now() - t,
-            name: diagName
-          };
-
-          // Test connection state
-          const t2 = Date.now();
-          await stateCompat(diagName);
-          steps.connectionState = {
-            ok: true,
-            status: 200,
-            ms: Date.now() - t2
-          };
-        } catch (e: any) {
-          const isAlreadyExists = /exist|already/i.test(String(e?.body || e));
-          steps.create = {
-            ok: isAlreadyExists,
-            status: e?.status ?? 500,
-            details: e?.body ?? null,
-            note: isAlreadyExists ? "Already exists (expected)" : undefined
-          };
-          if (!isAlreadyExists) {
-            steps.connectionState = {
+        if (steps.config.ok) {
+          // Test fetchInstances
+          try {
+            const t = Date.now();
+            const instances = await listCompat();
+            steps.fetchInstances = {
+              ok: true,
+              status: 200,
+              ms: Date.now() - t,
+              instanceCount: Array.isArray(instances) ? instances.length : 0
+            };
+          } catch (e: any) {
+            steps.fetchInstances = {
               ok: false,
-              status: 0,
-              error: "Skipped due to create failure"
+              status: e?.status ?? 500,
+              details: e?.body ?? null,
+              url: e?.url
             };
           }
-        }
-      }
 
-      const okAll = Object.values(steps).every((s: any) => s.ok);
-      return ok({
-        ok: okAll,
-        steps,
-        totalMs: Date.now() - startTime,
-        evolutionBaseUrl: BASE,
-        apiKeyConfigured: !!KEY
-      });
-    }
+          // Test create instance (only if fetch worked)
+          if (steps.fetchInstances.ok) {
+            const diagName = `evo_diag_${Date.now()}`;
+            try {
+              const t = Date.now();
+              await evo("/instance/create", {
+                method: "POST",
+                body: JSON.stringify({
+                  instanceName: diagName,
+                  integration: "WHATSAPP_BAILEYS"
+                })
+              });
+              steps.create = {
+                ok: true,
+                status: 200,
+                ms: Date.now() - t,
+                name: diagName
+              };
+
+              // Test connection state
+              try {
+                const t2 = Date.now();
+                await stateCompat(diagName);
+                steps.connectionState = {
+                  ok: true,
+                  status: 200,
+                  ms: Date.now() - t2
+                };
+              } catch (e: any) {
+                steps.connectionState = {
+                  ok: false,
+                  status: e?.status ?? 500,
+                  details: e?.body ?? null
+                };
+              }
+            } catch (e: any) {
+              const isAlreadyExists = /exist|already/i.test(String(e?.body || e));
+              steps.create = {
+                ok: isAlreadyExists,
+                status: e?.status ?? 500,
+                details: e?.body ?? null,
+                note: isAlreadyExists ? "Already exists (expected)" : undefined
+              };
+              if (isAlreadyExists) {
+                // If exists, try connectionState anyway
+                try {
+                  const t2 = Date.now();
+                  await stateCompat(diagName);
+                  steps.connectionState = {
+                    ok: true,
+                    status: 200,
+                    ms: Date.now() - t2
+                  };
+                } catch (e: any) {
+                  steps.connectionState = {
+                    ok: false,
+                    status: e?.status ?? 500,
+                    details: e?.body ?? null
+                  };
+                }
+              } else {
+                steps.connectionState = {
+                  ok: false,
+                  status: 0,
+                  error: "Skipped due to create failure"
+                };
+              }
+            }
+          }
+        }
+
+        const okAll = Object.values(steps).every((s: any) => s.ok);
+        return ok({
+          ok: okAll,
+          steps,
+          totalMs: Date.now() - startTime,
+          evolutionBaseUrl: BASE,
+          apiKeyConfigured: !!KEY
+        });
+      }
 
     if (action === "list_instances") {
       try {
@@ -278,15 +298,22 @@ serve(async (req) => {
         if (!b.includes("exist")) return err(e); // tolerate "already exists"
       }
       
-      // Best-effort binding
-      try {
-        await supa
-          .from("open_channel_bindings")
-          .upsert(
-            { provider: "evolution", instance_id: name, line_id: String(lineId) },
-            { onConflict: "provider,line_id" }
-          );
-      } catch {} // ignore binding errors
+        // Best-effort binding
+        try {
+          await supa
+            .from("open_channel_bindings")
+            .upsert(
+              { provider: "evolution", instance_id: name, line_id: String(lineId) },
+              { onConflict: "provider,line_id" }
+            );
+        } catch (e) {
+          console.log(JSON.stringify({
+            category: 'EVO',
+            action: 'BINDING_WARNING',
+            msg: 'Failed to bind - table may not exist',
+            error: String(e)
+          }));
+        } // ignore binding errors
       
       return ok({ ok: true, instanceName: name });
     }
@@ -367,7 +394,13 @@ serve(async (req) => {
             { onConflict: "provider,line_id" }
           );
         return ok({ ok: true });
-      } catch {
+      } catch (e) {
+        console.log(JSON.stringify({
+          category: 'EVO',
+          action: 'BIND_WARNING',
+          msg: 'binding_not_persisted',
+          error: String(e)
+        }));
         return ok({ ok: false, warn: "binding_not_persisted" });
       }
     }

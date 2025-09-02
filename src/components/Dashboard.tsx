@@ -180,7 +180,54 @@ const Dashboard = () => {
               <Button 
                 size="sm" 
                 variant="outline" 
-                onClick={checkEvolutionApi}
+                onClick={async () => {
+                  try {
+                    const result = await evolutionApi.diagnostic();
+                    console.log("Evolution diagnostic:", result);
+                    
+                    if (result?.ok === true) {
+                      setApiStatus(prev => ({ ...prev, evolutionApi: true }));
+                      toast({
+                        title: "✅ Evolution OK",
+                        description: `Diagnóstico completo em ${result.totalMs}ms`,
+                      });
+                    } else {
+                      setApiStatus(prev => ({ ...prev, evolutionApi: false }));
+                      
+                      // Show detailed step results
+                      const failedSteps = Object.entries(result?.steps || {})
+                        .filter(([_, step]: [string, any]) => !step.ok)
+                        .map(([name, step]: [string, any]) => 
+                          `${name}: ${step.error || `Status ${step.status}`}${step.details ? ` - ${step.details}` : ''}`
+                        );
+                      
+                      toast({
+                        title: "❌ Evolution Falha",
+                        description: failedSteps.length > 0 
+                          ? failedSteps.join('\n') 
+                          : "Ver console para detalhes",
+                        variant: "destructive",
+                      });
+                    }
+                  } catch (e: any) {
+                    console.error("Erro no diagnóstico:", e);
+                    setApiStatus(prev => ({ ...prev, evolutionApi: false }));
+                    
+                    let errorMsg = "Erro desconhecido";
+                    if (e instanceof EvolutionApiError) {
+                      errorMsg = e.message;
+                      if (e.details) errorMsg += ` - ${JSON.stringify(e.details)}`;
+                    } else {
+                      errorMsg = e.message || String(e);
+                    }
+                    
+                    toast({
+                      title: "❌ Evolution Erro",
+                      description: errorMsg,
+                      variant: "destructive",
+                    });
+                  }
+                }}
                 className="w-full"
               >
                 Testar Novamente
@@ -190,7 +237,7 @@ const Dashboard = () => {
                 onClick={async () => {
                   try {
                     const result = await evolutionApi.diagnostic();
-                    console.log("Evolution diagnostic:", result);
+                    console.log("Evolution diagnostic full:", result);
                     
                     const diagnosticText = JSON.stringify(result, null, 2);
                     
@@ -198,12 +245,14 @@ const Dashboard = () => {
                       title: result?.ok ? "✅ Evolution OK" : "❌ Evolution Falha",
                       description: result?.ok 
                         ? `Diagnóstico completo em ${result.totalMs}ms` 
-                        : "Ver console para detalhes",
+                        : "Ver console para detalhes completos",
                       variant: result?.ok ? "default" : "destructive",
                     });
                     
                     // Show alert with full details
-                    alert(`Diagnóstico Evolution API:\n\n${diagnosticText}`);
+                    if (window.confirm(`Diagnóstico Evolution API:\n\n${diagnosticText}\n\nCopiar para clipboard?`)) {
+                      navigator.clipboard?.writeText(diagnosticText);
+                    }
                   } catch (e: any) {
                     console.error("Erro no diagnóstico:", e);
                     toast({
@@ -216,7 +265,7 @@ const Dashboard = () => {
                 className="w-full"
               >
                 <Search className="h-4 w-4 mr-2" />
-                Diagnóstico
+                Diagnóstico Completo
               </Button>
             </div>
           </CardContent>

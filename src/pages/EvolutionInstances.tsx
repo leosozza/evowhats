@@ -6,6 +6,7 @@ import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Eye } from "lucide-react";
+import { evolutionApi, EvolutionApiError } from "@/lib/evolutionApi";
 
 export default function EvolutionInstances() {
   const navigate = useNavigate();
@@ -21,13 +22,13 @@ export default function EvolutionInstances() {
   const loadInstances = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "list_instances" },
-      });
+      console.log(JSON.stringify({
+        category: 'UI',
+        view: 'EvolutionInstances',
+        action: 'loadInstances'
+      }));
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
+      const data = await evolutionApi.listInstances();
       const instanceList = data?.instances || [];
       setInstances(instanceList);
       
@@ -46,9 +47,18 @@ export default function EvolutionInstances() {
       });
     } catch (error: any) {
       console.error("Error loading instances:", error);
+      
+      let errorMsg = "Erro desconhecido";
+      if (error instanceof EvolutionApiError) {
+        errorMsg = error.message;
+        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
+      } else {
+        errorMsg = error.message || String(error);
+      }
+      
       toast({
         title: "❌ Erro",
-        description: error.message,
+        description: errorMsg,
         variant: "destructive",
       });
     } finally {
@@ -72,13 +82,14 @@ export default function EvolutionInstances() {
 
   const checkConnectionState = async (lineId: string) => {
     try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "get_status_for_line", lineId },
-      });
+      console.log(JSON.stringify({
+        category: 'UI',
+        view: 'EvolutionInstances',
+        action: 'checkConnectionState',
+        lineId
+      }));
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
+      const data = await evolutionApi.getStatus(lineId);
       const state = (data?.state || "unknown").toLowerCase();
       setConnectionStates(prev => ({ ...prev, [lineId]: state }));
 
@@ -104,12 +115,12 @@ export default function EvolutionInstances() {
         if (state === "connecting") {
           // Get QR code
           try {
-            const { data } = await supabase.functions.invoke("evolution-connector-v2", {
-              body: { action: "get_qr_for_line", lineId },
-            });
+            const data = await evolutionApi.getQr(lineId);
             
             if (data?.qr_base64) {
               setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${data.qr_base64}` }));
+            } else if (data?.pairingCode) {
+              setQrCodes(prev => ({ ...prev, [lineId]: `pairing:${data.pairingCode}` }));
             }
           } catch (error) {
             console.error("Error getting QR:", error);
@@ -168,12 +179,14 @@ export default function EvolutionInstances() {
     }
 
     try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "ensure_line_session", lineId: newLineId },
-      });
+      console.log(JSON.stringify({
+        category: 'UI',
+        view: 'EvolutionInstances',
+        action: 'createInstance',
+        lineId: newLineId
+      }));
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      const data = await evolutionApi.ensureSession(newLineId);
 
       toast({
         title: "✅ Sucesso",
@@ -184,9 +197,18 @@ export default function EvolutionInstances() {
       await loadInstances();
     } catch (error: any) {
       console.error("Error creating instance:", error);
+      
+      let errorMsg = "Erro desconhecido";
+      if (error instanceof EvolutionApiError) {
+        errorMsg = error.message;
+        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
+      } else {
+        errorMsg = error.message || String(error);
+      }
+      
       toast({
         title: "❌ Erro",
-        description: error.message,
+        description: errorMsg,
         variant: "destructive",
       });
     }
@@ -194,12 +216,14 @@ export default function EvolutionInstances() {
 
   const connectInstance = async (lineId: string) => {
     try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "start_session_for_line", lineId },
-      });
+      console.log(JSON.stringify({
+        category: 'UI',
+        view: 'EvolutionInstances',
+        action: 'connectInstance',
+        lineId
+      }));
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      const data = await evolutionApi.startSession(lineId);
 
       toast({
         title: "✅ Sessão iniciada",
@@ -209,9 +233,18 @@ export default function EvolutionInstances() {
       startPolling(lineId);
     } catch (error: any) {
       console.error("Error connecting instance:", error);
+      
+      let errorMsg = "Erro desconhecido";
+      if (error instanceof EvolutionApiError) {
+        errorMsg = error.message;
+        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
+      } else {
+        errorMsg = error.message || String(error);
+      }
+      
       toast({
         title: "❌ Erro",
-        description: error.message,
+        description: errorMsg,
         variant: "destructive",
       });
     }
@@ -219,11 +252,15 @@ export default function EvolutionInstances() {
 
   const bindToChannel = async (instanceId: string, lineId: string) => {
     try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { action: "bind_line", instanceId, lineId },
-      });
+      console.log(JSON.stringify({
+        category: 'UI',
+        view: 'EvolutionInstances',
+        action: 'bindToChannel',
+        instanceId,
+        lineId
+      }));
 
-      if (error) throw error;
+      const data = await evolutionApi.bindLine(instanceId, lineId);
       
       if (data?.warn) {
         toast({
@@ -237,9 +274,17 @@ export default function EvolutionInstances() {
         });
       }
     } catch (error: any) {
+      let errorMsg = "Erro desconhecido";
+      if (error instanceof EvolutionApiError) {
+        errorMsg = error.message;
+        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
+      } else {
+        errorMsg = error.message || String(error);
+      }
+      
       toast({
         title: "❌ Erro",
-        description: error.message,
+        description: errorMsg,
         variant: "destructive",
       });
     }
@@ -257,17 +302,15 @@ export default function EvolutionInstances() {
     }
 
     try {
-      const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { 
-          action: "test_send", 
-          lineId, 
-          to: number,
-          text: "Teste de envio da instância Evolution"
-        },
-      });
+      console.log(JSON.stringify({
+        category: 'UI',
+        view: 'EvolutionInstances',
+        action: 'testSend',
+        lineId,
+        to: number
+      }));
 
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      const data = await evolutionApi.testSend(lineId, number, "Teste de envio da instância Evolution");
 
       toast({
         title: "✅ Sucesso",
@@ -275,9 +318,18 @@ export default function EvolutionInstances() {
       });
     } catch (error: any) {
       console.error("Error sending test message:", error);
+      
+      let errorMsg = "Erro desconhecido";
+      if (error instanceof EvolutionApiError) {
+        errorMsg = error.message;
+        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
+      } else {
+        errorMsg = error.message || String(error);
+      }
+      
       toast({
         title: "❌ Erro",
-        description: error.message,
+        description: errorMsg,
         variant: "destructive",
       });
     }
@@ -400,15 +452,29 @@ export default function EvolutionInstances() {
                   {/* QR Code display */}
                   {qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id] && (
                     <div className="mt-4 p-4 border rounded bg-white">
-                      <p className="text-sm font-medium mb-2">Escaneie este QR Code:</p>
-                      <img 
-                        src={qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id]} 
-                        alt="QR Code"
-                        className="w-48 h-48 mx-auto border"
-                      />
-                      <p className="text-xs text-muted-foreground mt-2 text-center">
-                        O QR Code será atualizado automaticamente a cada 4 segundos
-                      </p>
+                      {qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id].startsWith('pairing:') ? (
+                        <div>
+                          <p className="text-sm font-medium mb-2">Código de Pareamento:</p>
+                          <div className="text-center text-2xl font-mono bg-gray-100 p-4 rounded">
+                            {qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id].replace('pairing:', '')}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2 text-center">
+                            Digite este código no WhatsApp para parear
+                          </p>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-sm font-medium mb-2">Escaneie este QR Code:</p>
+                          <img 
+                            src={qrCodes[((instance.instanceName || instance.instance?.instanceName)?.replace('evo_line_', '')) || instance.id]} 
+                            alt="QR Code"
+                            className="w-48 h-48 mx-auto border"
+                          />
+                          <p className="text-xs text-muted-foreground mt-2 text-center">
+                            O QR Code será atualizado automaticamente a cada 4 segundos
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
 
