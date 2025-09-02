@@ -127,91 +127,118 @@ serve(async (req) => {
     return new Response(null, { headers: CORS });
   }
 
-    // Validate environment
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-      return ok({
-        ok: false,
-        statusCode: 500,
-        error: "Supabase configuration missing"
-      }, 500);
-    }
-
-    const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-    
-    const err = (e: any) => ok({
+  // Validate environment
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    return ok({
       ok: false,
-      statusCode: e?.status ?? 500,
-      error: String(e),
-      details: e?.body ?? null,
-      url: e?.url ?? null
-    }, e?.status ?? 500);
+      statusCode: 500,
+      error: "Supabase configuration missing"
+    }, 500);
+  }
 
-    try {
-      const body = await req.json().catch(() => ({}));
-      const { action, lineId, instanceId, to, text, number } = body;
+  const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  
+  const err = (e: any) => ok({
+    ok: false,
+    statusCode: e?.status ?? 500,
+    error: String(e),
+    details: e?.body ?? null,
+    url: e?.url ?? null
+  }, e?.status ?? 500);
 
-      console.log(JSON.stringify({
-        category: 'EVO',
-        action,
-        lineId,
-        instanceId,
-        timestamp: new Date().toISOString(),
-        hasConfig: !!(BASE && KEY)
-      }));
+  let body: any = {};
+  
+  try {
+    body = await req.json().catch(() => ({}));
+    const { action, lineId, instanceId, to, text, number } = body;
 
-      // Comprehensive diagnostic - ALWAYS returns 200
-      if (action === "diag") {
-        const steps: any = {};
-        const startTime = Date.now();
+    console.log(JSON.stringify({
+      category: 'EVO',
+      action,
+      lineId,
+      instanceId,
+      timestamp: new Date().toISOString(),
+      hasConfig: !!(BASE && KEY)
+    }));
 
-        // Check configuration
-        steps.config = {
-          ok: !!(BASE && KEY),
-          hasBaseUrl: !!BASE,
-          hasApiKey: !!KEY,
-          baseUrl: BASE ? `${BASE.substring(0, 30)}...` : "missing"
-        };
+    // Comprehensive diagnostic - ALWAYS returns 200
+    if (action === "diag") {
+      const steps: any = {};
+      const startTime = Date.now();
 
-        if (steps.config.ok) {
-          // Test fetchInstances
+      // Check configuration
+      steps.config = {
+        ok: !!(BASE && KEY),
+        hasBaseUrl: !!BASE,
+        hasApiKey: !!KEY,
+        baseUrl: BASE ? `${BASE.substring(0, 30)}...` : "missing"
+      };
+
+      if (steps.config.ok) {
+        // Test fetchInstances
+        try {
+          const t = Date.now();
+          const instances = await listCompat();
+          steps.fetchInstances = {
+            ok: true,
+            status: 200,
+            ms: Date.now() - t,
+            instanceCount: Array.isArray(instances) ? instances.length : 0
+          };
+        } catch (e: any) {
+          steps.fetchInstances = {
+            ok: false,
+            status: e?.status ?? 500,
+            details: e?.body ?? null,
+            url: e?.url
+          };
+        }
+
+        // Test create instance (only if fetch worked)
+        if (steps.fetchInstances.ok) {
+          const diagName = `evo_diag_${Date.now()}`;
           try {
             const t = Date.now();
-            const instances = await listCompat();
-            steps.fetchInstances = {
+            await evo("/instance/create", {
+              method: "POST",
+              body: JSON.stringify({
+                instanceName: diagName,
+                integration: "WHATSAPP_BAILEYS"
+              })
+            });
+            steps.create = {
               ok: true,
               status: 200,
               ms: Date.now() - t,
-              instanceCount: Array.isArray(instances) ? instances.length : 0
+              name: diagName
             };
-          } catch (e: any) {
-            steps.fetchInstances = {
-              ok: false,
-              status: e?.status ?? 500,
-              details: e?.body ?? null,
-              url: e?.url
-            };
-          }
 
-          // Test create instance (only if fetch worked)
-          if (steps.fetchInstances.ok) {
-            const diagName = `evo_diag_${Date.now()}`;
+            // Test connection state
             try {
-              const t = Date.now();
-              await evo("/instance/create", {
-                method: "POST",
-                body: JSON.stringify({
-                  instanceName: diagName,
-                  integration: "WHATSAPP_BAILEYS"
-                })
-              });
-              steps.create = {
+              const t2 = Date.now();
+              await stateCompat(diagName);
+              steps.connectionState = {
                 ok: true,
                 status: 200,
-                ms: Date.now() - t,
-                name: diagName
+                ms: Date.now() - t2
               };
-
-              // Test connection state
+            } catch (e: any) {
+              steps.connectionState = {
+                ok: false,
+                status: e?.status ?? 500,
+                details: e?.body ?? null
+              };
+            }
+          } catch (e: any) {
+            const isAlreadyExists = /exist|already/i.test(String(e?.body || e));
+            steps.create = {
+              ok: isAlreadyExists,
+              status: e?.status ?? 500,
+              details: e?.body ?? null,
+              note: isAlreadyExists ? "Already exists (expected)" : undefined
+            };
+            if (isAlreadyExists) {
+              // If exists, try connectionState anyway
               try {
                 const t2 = Date.now();
                 await stateCompat(diagName);
@@ -227,51 +254,26 @@ serve(async (req) => {
                   details: e?.body ?? null
                 };
               }
-            } catch (e: any) {
-              const isAlreadyExists = /exist|already/i.test(String(e?.body || e));
-              steps.create = {
-                ok: isAlreadyExists,
-                status: e?.status ?? 500,
-                details: e?.body ?? null,
-                note: isAlreadyExists ? "Already exists (expected)" : undefined
+            } else {
+              steps.connectionState = {
+                ok: false,
+                status: 0,
+                error: "Skipped due to create failure"
               };
-              if (isAlreadyExists) {
-                // If exists, try connectionState anyway
-                try {
-                  const t2 = Date.now();
-                  await stateCompat(diagName);
-                  steps.connectionState = {
-                    ok: true,
-                    status: 200,
-                    ms: Date.now() - t2
-                  };
-                } catch (e: any) {
-                  steps.connectionState = {
-                    ok: false,
-                    status: e?.status ?? 500,
-                    details: e?.body ?? null
-                  };
-                }
-              } else {
-                steps.connectionState = {
-                  ok: false,
-                  status: 0,
-                  error: "Skipped due to create failure"
-                };
-              }
             }
           }
         }
-
-        const okAll = Object.values(steps).every((s: any) => s.ok);
-        return ok({
-          ok: okAll,
-          steps,
-          totalMs: Date.now() - startTime,
-          evolutionBaseUrl: BASE,
-          apiKeyConfigured: !!KEY
-        });
       }
+
+      const okAll = Object.values(steps).every((s: any) => s.ok);
+      return ok({
+        ok: okAll,
+        steps,
+        totalMs: Date.now() - startTime,
+        evolutionBaseUrl: BASE,
+        apiKeyConfigured: !!KEY
+      });
+    }
 
     if (action === "list_instances") {
       try {
