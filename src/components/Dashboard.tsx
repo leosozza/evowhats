@@ -117,6 +117,9 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
+    console.log("VITE_SUPABASE_URL", import.meta.env.VITE_SUPABASE_URL);
+    const pk = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+    console.log("VITE_SUPABASE_KEY", pk ? String(pk).slice(0, 8) + "…" : "undefined");
     checkApiStatus();
   }, []);
 
