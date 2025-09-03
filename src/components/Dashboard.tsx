@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Activity, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { evolutionApi, EvolutionApiError } from "@/lib/evolutionApi";
+
+import { callEvolution } from "@/utils/callEvolution";
 
 interface APIStatus {
   evolutionApi: boolean;
@@ -20,7 +21,7 @@ const Dashboard = () => {
 
   const checkEvolutionApi = async () => {
     try {
-      const result = await evolutionApi.diagnostic();
+      const result = await callEvolution("diag");
       
       const isHealthy = result?.ok === true;
       setApiStatus(prev => ({ ...prev, evolutionApi: isHealthy }));
@@ -63,13 +64,8 @@ const Dashboard = () => {
       let errorMsg = "Erro desconhecido";
       let details = "";
       
-      if (error instanceof EvolutionApiError) {
-        errorMsg = error.message;
-        details = error.details ? `Status: ${error.statusCode}` : "";
-        if (error.url) details += ` URL: ${error.url}`;
-      } else {
-        errorMsg = error.message || String(error);
-      }
+      errorMsg = error?.message || String(error);
+      details = "";
       
       toast({
         title: "❌ Erro Evolution",
@@ -182,7 +178,7 @@ const Dashboard = () => {
                 variant="outline" 
                 onClick={async () => {
                   try {
-                    const result = await evolutionApi.diagnostic();
+                    const result = await callEvolution("diag");
                     console.log("Evolution diagnostic:", result);
                     
                     if (result?.ok === true) {
@@ -213,13 +209,7 @@ const Dashboard = () => {
                     console.error("Erro no diagnóstico:", e);
                     setApiStatus(prev => ({ ...prev, evolutionApi: false }));
                     
-                    let errorMsg = "Erro desconhecido";
-                    if (e instanceof EvolutionApiError) {
-                      errorMsg = e.message;
-                      if (e.details) errorMsg += ` - ${JSON.stringify(e.details)}`;
-                    } else {
-                      errorMsg = e.message || String(e);
-                    }
+                    let errorMsg = e?.message || String(e);
                     
                     toast({
                       title: "❌ Evolution Erro",
@@ -236,7 +226,7 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const result = await evolutionApi.diagnostic();
+                    const result = await callEvolution("diag");
                     console.log("Evolution diagnostic full:", result);
                     
                     const diagnosticText = JSON.stringify(result, null, 2);
@@ -312,7 +302,7 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const result = await evolutionApi.listInstances();
+                    const result = await callEvolution("list_instances");
                     console.log("Evolution test result:", result);
                     
                     const instances = result?.instances || [];
@@ -330,20 +320,11 @@ const Dashboard = () => {
                   } catch (e: any) {
                     console.error("Erro no teste Evolution:", e);
                     
-                    let errorMsg = "Erro desconhecido";
-                    let details = "";
-                    
-                    if (e instanceof EvolutionApiError) {
-                      errorMsg = e.message;
-                      details = `Status: ${e.statusCode}`;
-                      if (e.details) details += ` - ${JSON.stringify(e.details)}`;
-                    } else {
-                      errorMsg = e.message || String(e);
-                    }
+                    const errorMsg = e?.message || String(e);
                     
                     toast({
                       title: "❌ Evolution Erro",
-                      description: `${errorMsg}${details ? ` (${details})` : ''}`,
+                      description: errorMsg,
                       variant: "destructive",
                     });
                   }
