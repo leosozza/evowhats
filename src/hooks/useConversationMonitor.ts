@@ -4,7 +4,7 @@ import { useConversations } from "@/hooks/useConversations";
 import { useMessages } from "@/hooks/useMessages";
 import { sendMessage } from "@/services/chatApi";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 
 export function useConversationMonitor() {
   const { session } = useSupabaseAuth();

@@ -6,7 +6,7 @@ import ChatWindow from "./ChatWindow";
 import { Card } from "@/components/ui/card";
 import { createConversation } from "@/services/chatApi";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 
 export default function ChatLayout() {
   const { session, user, loading } = useSupabaseAuth();

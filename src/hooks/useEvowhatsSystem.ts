@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSupabaseAuth } from './useSupabaseAuth';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import * as EvowhatsApi from '@/services/evowhatsApi';
 
 export interface SystemStatus {
