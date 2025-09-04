@@ -9,21 +9,19 @@ export async function callEvolution(action: string, payload: any = {}) {
   try {
     const { data, error } = await supabase.functions.invoke(
       "evolution-connector-v2",
-      { body: { action, ...payload } }
+      { body: { action, ...payload }, headers: { "Content-Type": "application/json" } }
     );
     if (error) throw error;
     return data;
   } catch (e: any) {
-    let details: any = null;
     if (e instanceof FunctionsHttpError) {
-      try {
-        details = await e.context.json();
-      } catch {
-        details = await e.context.text();
+      try { 
+        const det = await e.context.json(); 
+        throw new Error(JSON.stringify(det)); 
+      } catch { 
+        const det = await e.context.text(); 
+        throw new Error(det); 
       }
-      throw new Error(
-        typeof details === "string" ? details : JSON.stringify(details)
-      );
     }
     if (e instanceof FunctionsFetchError || e instanceof FunctionsRelayError) {
       throw new Error(e.message);
