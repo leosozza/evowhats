@@ -33,15 +33,9 @@ export async function syncBitrixLeads() {
   const accessToken = session.data.session?.access_token;
   if (!accessToken) throw new Error("Você precisa estar autenticado.");
 
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-sync`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-    },
+  const { data, error } = await supabase.functions.invoke("bitrix-sync", {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao sincronizar leads");
-  }
-  return resp.json() as Promise<{ success: boolean; imported?: number }>;
+  if (error) throw new Error(error.message || "Falha ao sincronizar leads");
+  return data as { success: boolean; imported?: number };
 }
