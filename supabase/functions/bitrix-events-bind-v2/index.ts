@@ -6,11 +6,16 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") || "").split(/[,\s]+/).filter(Boolean);
+function cors(origin?: string | null) {
+  const allowed = origin && (ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.includes(origin)) ? origin : "";
+  return {
+    "Access-Control-Allow-Origin": allowed || ALLOWED_ORIGINS[0] || "",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-corr-id",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
+  } as Record<string, string>;
+}
 
 async function logStructured(service: any, log: any) {
   try {
@@ -29,28 +34,32 @@ async function logStructured(service: any, log: any) {
   }
 }
 
+import { callBitrixAPI, setCorrelationId } from "../_shared/bitrix/callBitrixAPI.ts";
+
 serve(async (req) => {
+  const origin = req.headers.get("origin");
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
+    return new Response(null, { status: 204, headers: cors(origin) });
   }
 
   if (req.method !== "POST") {
     return new Response(
       JSON.stringify({ error: "Method not allowed" }),
-      { status: 405, headers: corsHeaders }
+      { status: 405, headers: cors(origin) }
     );
   }
 
   const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  setCorrelationId(req.headers.get("x-corr-id") || "");
 
   try {
     const body = await req.json();
     const { portalUrl, accessToken, tenantId } = body;
 
-    if (!portalUrl || !accessToken || !tenantId) {
+    if (!tenantId) {
       return new Response(
-        JSON.stringify({ error: "Missing required fields" }),
-        { status: 400, headers: corsHeaders }
+        JSON.stringify({ error: "Missing tenantId" }),
+        { status: 400, headers: cors(origin) }
       );
     }
 
@@ -72,28 +81,14 @@ serve(async (req) => {
     for (const eventName of eventsToReregister) {
       try {
         // First unbind any existing handler for this event
-        const unbindUrl = `${portalUrl}/rest/event.unbind?auth=${accessToken}`;
-        const unbindResponse = await fetch(unbindUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            event: eventName,
-            handler: webhookUrl
-          })
-        });
+        try {
+          await callBitrixAPI(tenantId, "event.unbind", { event: eventName, handler: webhookUrl });
+        } catch (_) {
+          // ignore errors on unbind
+        }
 
         // Then bind to new handler (bitrix-events-v2)
-        const bindUrl = `${portalUrl}/rest/event.bind?auth=${accessToken}`;
-        const bindResponse = await fetch(bindUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            event: eventName,
-            handler: webhookUrl
-          })
-        });
-
-        const bindResult = await bindResponse.json();
+        const bindResult = await callBitrixAPI(tenantId, "event.bind", { event: eventName, handler: webhookUrl });
         
         if (bindResult.result === true) {
           results.push({ event: eventName, status: "success" });
@@ -145,14 +140,14 @@ serve(async (req) => {
         webhook_url: webhookUrl,
         results
       }),
-      { headers: corsHeaders }
+      { headers: cors(origin) }
     );
 
   } catch (error: any) {
     console.error("[bitrix-events-bind-v2] Error:", error);
     return new Response(
       JSON.stringify({ error: error.message }),
-      { status: 500, headers: corsHeaders }
+      { status: 500, headers: cors(origin) }
     );
   }
 });

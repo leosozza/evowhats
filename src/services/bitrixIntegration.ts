@@ -1,27 +1,19 @@
 
 import { supabase } from "@/integrations/supabase/client";
 
-const FUNCTIONS_BASE = "https://twqcybbjyhcokcrdfgkk.functions.supabase.co";
+// All Bitrix calls go through Supabase Edge Functions via supabase.functions.invoke
 
 export async function startBitrixOAuth(portalUrl: string) {
   const session = await supabase.auth.getSession();
   const accessToken = session.data.session?.access_token;
   if (!accessToken) throw new Error("Você precisa estar autenticado.");
 
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-oauth-start`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ portal_url: portalUrl }),
+  const { data, error } = await supabase.functions.invoke("bitrix-oauth-start", {
+    body: { portal_url: portalUrl },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao iniciar OAuth");
-  }
-  return resp.json() as Promise<{ auth_url: string }>;
+  if (error) throw new Error(error.message || "Falha ao iniciar OAuth");
+  return data as { auth_url: string };
 }
 
 export async function bindBitrixEvents() {
@@ -29,17 +21,11 @@ export async function bindBitrixEvents() {
   const accessToken = session.data.session?.access_token;
   if (!accessToken) throw new Error("Você precisa estar autenticado.");
 
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-events-bind`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-    },
+  const { data, error } = await supabase.functions.invoke("bitrix-events-bind-v2", {
+    body: { tenantId: session.data.session?.user?.id },
   });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao vincular eventos");
-  }
-  return resp.json() as Promise<{ success: boolean; message: string }>;
+  if (error) throw new Error(error.message || "Falha ao vincular eventos");
+  return data as { success: boolean; message: string };
 }
 
 export async function syncBitrixLeads() {

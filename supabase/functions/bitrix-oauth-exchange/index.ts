@@ -1,122 +1,136 @@
-
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const CLIENT_ID = Deno.env.get("BITRIX_CLIENT_ID")!;
-const CLIENT_SECRET = Deno.env.get("BITRIX_CLIENT_SECRET")!;
-const REDIRECT_URI = Deno.env.get("BITRIX_REDIRECT_URI")!;
+const BITRIX_APP_ID = Deno.env.get("BITRIX_APP_ID") || Deno.env.get("BITRIX_CLIENT_ID") || "";
+const BITRIX_APP_SECRET = Deno.env.get("BITRIX_APP_SECRET") || Deno.env.get("BITRIX_CLIENT_SECRET") || "";
+const REDIRECT_URL = Deno.env.get("BITRIX_REDIRECT_URL") || "";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-};
+const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") || "").split(/[\s,]+/).filter(Boolean);
+
+function cors(origin?: string | null) {
+  const allowed = origin && (ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.includes(origin)) ? origin : "";
+  return {
+    "Access-Control-Allow-Origin": allowed || ALLOWED_ORIGINS[0] || "",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-corr-id",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
+  } as Record<string, string>;
+}
+
+function j(body: unknown, status = 200, origin?: string | null) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...cors(origin), "Content-Type": "application/json" },
+  });
+}
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+  const origin = req.headers.get("origin");
+  const corr = req.headers.get("x-corr-id") || crypto.randomUUID();
+
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(origin) });
+  if (req.method !== "POST") return j({ error: "method_not_allowed" }, 405, origin);
+
+  if (!BITRIX_APP_ID || !BITRIX_APP_SECRET || !REDIRECT_URL) {
+    return j({ error: "missing_backend_env", need: ["BITRIX_APP_ID","BITRIX_APP_SECRET","BITRIX_REDIRECT_URL"] }, 500, origin);
+  }
 
   try {
-    const body = await req.json();
-    const code: string | undefined = body?.code;
-    const cbDomain: string | undefined = body?.domain;
+    const body = await req.json().catch(() => ({}));
+    const code = String(body.code || "").trim();
+    const state = String(body.state || "").trim();
+    const domain = String(body.domain || body.portal || "").trim();
 
-    console.log("[bitrix-oauth-exchange] Starting token exchange", {
-      hasCode: !!code,
-      hasDomain: !!cbDomain,
-      redirectUri: REDIRECT_URI
-    });
+    console.log(JSON.stringify({ category: "BITRIX_OAUTH", step: "exchange_start", corr, hasCode: !!code, hasState: !!state, domain }));
 
-    if (!code) {
-      return json({ ok: false, error: "missing_authorization_code" }, 400);
-    }
+    if (!code) return j({ ok: false, error: "missing_authorization_code" }, 400, origin);
 
-    // Trocar código por tokens
-    const tokenResponse = await fetch("https://oauth.bitrix.info/oauth/token/", {
+    const tokenRes = await fetch("https://oauth.bitrix.info/oauth/token/", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "authorization_code",
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        redirect_uri: REDIRECT_URI,
+        client_id: BITRIX_APP_ID,
+        client_secret: BITRIX_APP_SECRET,
+        redirect_uri: REDIRECT_URL,
         code,
       }),
     });
 
-    const tokenData = await tokenResponse.json();
-    
-    console.log("[bitrix-oauth-exchange] Token response", {
-      ok: tokenResponse.ok,
-      status: tokenResponse.status,
-      hasAccessToken: !!tokenData.access_token,
-      hasRefreshToken: !!tokenData.refresh_token,
-      domain: tokenData.domain,
-      clientEndpoint: tokenData.client_endpoint
-    });
+    const tokenData = await tokenRes.json();
+    console.log(JSON.stringify({ category: "BITRIX_OAUTH", step: "exchange_response", corr, status: tokenRes.status, ok: tokenRes.ok, hasAccess: !!tokenData.access_token }));
 
-    if (!tokenResponse.ok) {
-      return json({ ok: false, error: `token_exchange_failed: ${JSON.stringify(tokenData)}` }, 400);
+    if (!tokenRes.ok || !tokenData.access_token) {
+      return j({ ok: false, error: "token_exchange_failed", details: tokenData }, 400, origin);
     }
 
-    if (!tokenData.access_token) {
-      return json({ ok: false, error: "no_access_token_in_response" }, 400);
-    }
-
-    // Determinar portal_url
+    // Determine portal_url
     let portal_url: string | null = null;
     try {
       if (tokenData.client_endpoint) {
         portal_url = new URL(tokenData.client_endpoint).origin;
       } else if (tokenData.domain) {
-        portal_url = tokenData.domain.startsWith('http') ? tokenData.domain : `https://${tokenData.domain}`;
-      } else if (cbDomain) {
-        portal_url = cbDomain.startsWith('http') ? cbDomain : `https://${cbDomain}`;
+        portal_url = tokenData.domain.startsWith("http") ? tokenData.domain : `https://${tokenData.domain}`;
+      } else if (domain) {
+        portal_url = domain.startsWith("http") ? domain : `https://${domain}`;
       }
-    } catch (error) {
-      console.error("[bitrix-oauth-exchange] Error parsing portal URL:", error);
+    } catch (_) {}
+
+    if (!portal_url) return j({ ok: false, error: "could_not_determine_portal_url" }, 400, origin);
+
+    const member_id = tokenData.member_id || tokenData.installation_id || null;
+    const scope = Array.isArray(tokenData.scope) ? tokenData.scope.join(",") : (tokenData.scope || null);
+    const expires_in = Number(tokenData.expires_in || 3600);
+    const expires_at = new Date(Date.now() + (expires_in - 60) * 1000).toISOString();
+
+    const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+    // Try bitrix_tokens first
+    const insertTokens = async () => {
+      try {
+        const { error } = await service.from("bitrix_tokens").upsert({
+          tenant_id: state || null,
+          member_id,
+          portal_url,
+          access_token: tokenData.access_token,
+          refresh_token: tokenData.refresh_token || null,
+          scope,
+          expires_at,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "tenant_id" });
+        if (error) throw error;
+        return true;
+      } catch (e) {
+        console.log(JSON.stringify({ category: "BITRIX_OAUTH", step: "tokens_upsert_failed", corr, table: "bitrix_tokens", error: String(e) }));
+        return false;
+      }
+    };
+
+    const ensuredTokens = await insertTokens();
+
+    // Fallback to legacy table
+    if (!ensuredTokens) {
+      await service.from("bitrix_credentials").upsert({
+        user_id: state || null,
+        portal_url,
+        client_id: BITRIX_APP_ID,
+        client_secret: BITRIX_APP_SECRET,
+        access_token: tokenData.access_token,
+        refresh_token: tokenData.refresh_token || null,
+        expires_at,
+        scope,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,portal_url" });
     }
 
-    if (!portal_url) {
-      return json({ ok: false, error: "could_not_determine_portal_url" }, 400);
-    }
+    console.log(JSON.stringify({ category: "BITRIX_OAUTH", step: "exchange_done", corr, portal_url, member_id, usedTable: ensuredTokens ? "bitrix_tokens" : "bitrix_credentials" }));
 
-    console.log("[bitrix-oauth-exchange] Determined portal_url:", portal_url);
-
-    // Calcular expiração
-    const expiresIn = Number(tokenData.expires_in) || 3600;
-    const expires_at = new Date(Date.now() + (expiresIn - 60) * 1000).toISOString();
-
-    // Salvar no banco
-    const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-    
-    const { error: upsertError } = await supa.from("bitrix_credentials").upsert({
-      portal_url,
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token || '',
-      expires_at,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "portal_url" });
-
-    if (upsertError) {
-      console.error("[bitrix-oauth-exchange] Database error:", upsertError);
-      return json({ ok: false, error: `database_error: ${upsertError.message}` }, 500);
-    }
-
-    console.log("[bitrix-oauth-exchange] Tokens saved successfully");
-
-    return json({ ok: true, portal_url });
+    return j({ ok: true, portal_url, member_id }, 200, origin);
   } catch (e) {
     console.error("[bitrix-oauth-exchange] Exception:", e);
-    return json({ ok: false, error: `exception: ${String(e)}` }, 500);
+    return j({ ok: false, error: String(e) }, 500, origin);
   }
 });
-
-function json(payload: unknown, status = 200) {
-  return new Response(JSON.stringify(payload), { 
-    status, 
-    headers: { ...CORS, "Content-Type": "application/json" } 
-  });
-}
