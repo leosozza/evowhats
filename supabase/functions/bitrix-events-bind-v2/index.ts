@@ -66,14 +66,15 @@ serve(async (req) => {
     // Webhook URL pointing to bitrix-events-v2
     const webhookUrl = `https://${new URL(SUPABASE_URL).host.replace(".supabase.co", "")}.functions.supabase.co/bitrix-events-v2`;
 
-    // Events to bind (including closure and transfer events)
+    // Events to bind (including outbound message events)
     const eventsToReregister = [
       "OnImOpenLinesMessageAdd",
       "OnImMessageAdd", 
       "OnImOpenLinesSessionClose",
       "OnImOpenLinesSessionFinish",
       "OnImOpenLinesSessionTransfer",
-      "OnImOpenLinesOperatorAssign"
+      "OnImOpenLinesOperatorAssign",
+      "OnImOpenLinesMessageSend"  // Added for outbound messages
     ];
 
     const results = [];

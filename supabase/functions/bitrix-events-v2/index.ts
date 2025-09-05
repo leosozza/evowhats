@@ -9,9 +9,11 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-signature",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-signature, x-corr-id",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
+
+import { callBitrixAPI, setCorrelationId } from "../_shared/bitrix/callBitrixAPI.ts";
 
 async function logStructured(service: any, log: any) {
   try {
@@ -57,6 +59,9 @@ async function validateSignature(req: Request, payload: any): Promise<boolean> {
 }
 
 serve(async (req) => {
+  const corrId = req.headers.get("x-corr-id") || crypto.randomUUID();
+  setCorrelationId(corrId);
+  
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -85,7 +90,7 @@ serve(async (req) => {
       category: "SECURITY",
       provider: "bitrix",
       valid_signature: isValidSignature,
-      data: { event: payload.event, signature_valid: isValidSignature }
+      data: { event: payload.event, signature_valid: isValidSignature, corrId }
     });
 
     if (!isValidSignature) {
@@ -180,63 +185,29 @@ serve(async (req) => {
       }
     }
 
-    // Handle message events (existing logic)
+    // Handle message events (existing and new outbound logic)
+    if (eventType.toLowerCase().includes("message")) {
     if (eventType.toLowerCase().includes("message")) {
       const message = payload?.data?.MESSAGE || payload?.data?.message;
       const messageText = message?.MESSAGE || message?.text || "";
       const authorId = String(message?.AUTHOR_ID || message?.authorId || "");
+      const messageFiles = message?.FILES || message?.files || [];
 
-      // Skip if from bot/system or already processed
-      if (authorId === "0" || !messageText.trim()) {
-        return new Response(
-          JSON.stringify({ ok: true, info: "System message ignored" }),
-          { headers: corsHeaders }
-        );
+      // Determine direction: if authorId is "0" or system, it's likely inbound processing
+      // If authorId > 0, it's an outbound message from an agent
+      const isOutbound = authorId !== "0" && authorId && eventType.toLowerCase().includes("send");
+
+      if (isOutbound) {
+        // OUTBOUND: Agent sent message in Open Lines, deliver to WhatsApp via Evolution
+        await handleOutboundMessage(service, conversation, messageText, messageFiles, messageId, chatId, tenantId);
+      } else {
+        // INBOUND: Existing logic for processing inbound messages
+        await handleInboundMessage(service, conversation, messageText, messageId, authorId, chatId, tenantId);
       }
-
-      // Idempotency check
-      if (messageId) {
-        const { data: existing } = await service
-          .from("messages")
-          .select("id")
-          .eq("bitrix_message_id", messageId)
-          .limit(1)
-          .maybeSingle();
-
-        if (existing) {
-          return new Response(
-            JSON.stringify({ ok: true, info: "Message already processed" }),
-            { headers: corsHeaders }
-          );
-        }
-      }
-
-      // Create outbound message record
-      await service.from("messages").insert({
-        conversation_id: conversation.id,
-        direction: "out",
-        message_type: "text",
-        content: messageText,
-        bitrix_message_id: messageId || null,
-        sender_name: `User ${authorId}`,
-        status: "sent",
-        delivery_status: "sent"
-      });
-
-      await logStructured(service, {
-        category: "OUTBOUND",
-        tenantId,
-        conversationId: conversation.id,
-        chatId,
-        direction: "out",
-        provider: "bitrix",
-        msgKey: messageId,
-        data: { messageText, authorId }
-      });
     }
 
     return new Response(
-      JSON.stringify({ ok: true }),
+      JSON.stringify({ ok: true, corrId }),
       { headers: corsHeaders }
     );
 
@@ -246,12 +217,180 @@ serve(async (req) => {
       category: "SECURITY",
       provider: "bitrix",
       valid_signature: false,
-      data: { error: error.message }
+      data: { error: error.message, corrId }
     });
 
     return new Response(
-      JSON.stringify({ ok: false, error: error.message }),
+      JSON.stringify({ ok: false, error: error.message, corrId }),
       { status: 500, headers: corsHeaders }
     );
   }
 });
+
+// Helper functions for message handling
+async function handleInboundMessage(service: any, conversation: any, messageText: string, messageId: string, authorId: string, chatId: string, tenantId: string) {
+  // Skip if from bot/system or already processed
+  if (authorId === "0" || !messageText.trim()) {
+    return;
+  }
+
+  // Idempotency check
+  if (messageId) {
+    const { data: existing } = await service
+      .from("messages")
+      .select("id")
+      .eq("bitrix_message_id", messageId)
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) return;
+  }
+
+  // Create inbound message record
+  await service.from("messages").insert({
+    conversation_id: conversation.id,
+    direction: "in",
+    message_type: "text",
+    content: messageText,
+    bitrix_message_id: messageId || null,
+    sender_name: `User ${authorId}`,
+    status: "received",
+    delivery_status: "received"
+  });
+
+  await logStructured(service, {
+    category: "INBOUND",
+    tenantId,
+    conversationId: conversation.id,
+    chatId,
+    direction: "in",
+    provider: "bitrix",
+    msgKey: messageId,
+    data: { messageText, authorId }
+  });
+}
+
+async function handleOutboundMessage(service: any, conversation: any, messageText: string, messageFiles: any[], messageId: string, chatId: string, tenantId: string) {
+  if (!messageText.trim() && (!messageFiles || messageFiles.length === 0)) {
+    return; // No content to send
+  }
+
+  // Idempotency check
+  if (messageId) {
+    const { data: existing } = await service
+      .from("messages")
+      .select("id")
+      .eq("bitrix_message_id", messageId)
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) return;
+  }
+
+  // Find Evolution instance for this conversation
+  const { data: instance } = await service
+    .from("wa_instances")
+    .select("label, tenant_id")
+    .eq("id", conversation.instance_id)
+    .limit(1)
+    .maybeSingle();
+
+  if (!instance) {
+    console.error(`[bitrix-events-v2] No wa_instance found for conversation ${conversation.id}`);
+    return;
+  }
+
+  // Get contact phone
+  const { data: contact } = await service
+    .from("contacts")
+    .select("phone_e164")
+    .eq("id", conversation.contact_id)
+    .limit(1)
+    .maybeSingle();
+
+  if (!contact?.phone_e164) {
+    console.error(`[bitrix-events-v2] No contact phone found for conversation ${conversation.id}`);
+    return;
+  }
+
+  try {
+    // Send via Evolution API
+    const evolutionPayload = {
+      action: "send_message",
+      instanceName: instance.label,
+      to: contact.phone_e164,
+      message: {
+        text: messageText
+      }
+    };
+
+    // Try media files if present
+    if (messageFiles && messageFiles.length > 0) {
+      const firstFile = messageFiles[0];
+      if (firstFile?.URL || firstFile?.url) {
+        evolutionPayload.message = {
+          mediaUrl: firstFile.URL || firstFile.url,
+          caption: messageText || undefined
+        };
+      }
+    }
+
+    const evolutionResult = await fetch(
+      `https://${new URL(Deno.env.get("SUPABASE_URL")!).host.replace(".supabase.co", "")}.functions.supabase.co/evolution-connector-v2`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(evolutionPayload)
+      }
+    );
+
+    const evolutionResponse = await evolutionResult.json();
+    const deliveryStatus = evolutionResult.ok && evolutionResponse?.ok ? "sent" : "failed";
+
+    // Create outbound message record
+    await service.from("messages").insert({
+      conversation_id: conversation.id,
+      direction: "out",
+      message_type: messageFiles?.length > 0 ? "media" : "text",
+      content: messageText || "[media]",
+      media_url: messageFiles?.[0]?.URL || messageFiles?.[0]?.url || null,
+      bitrix_message_id: messageId || null,
+      sender_name: "Agent",
+      status: "sent",
+      delivery_status: deliveryStatus
+    });
+
+    await logStructured(service, {
+      category: "OUTBOUND",
+      tenantId,
+      conversationId: conversation.id,
+      chatId,
+      direction: "out",
+      provider: "evolution",
+      msgKey: messageId,
+      data: { 
+        messageText, 
+        deliveryStatus, 
+        evolutionResult: evolutionResult.ok,
+        instanceLabel: instance.label,
+        contactPhone: contact.phone_e164
+      }
+    });
+
+    console.log(`[bitrix-events-v2] Outbound message sent via Evolution: ${deliveryStatus}`);
+  } catch (e) {
+    console.error(`[bitrix-events-v2] Failed to send outbound message:`, e);
+    
+    // Still record the message with failed status
+    await service.from("messages").insert({
+      conversation_id: conversation.id,
+      direction: "out",
+      message_type: "text",
+      content: messageText,
+      bitrix_message_id: messageId || null,
+      sender_name: "Agent",
+      status: "failed",
+      delivery_status: "failed"
+    });
+  }
+}

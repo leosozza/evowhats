@@ -1,15 +1,15 @@
-
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createHmac } from "https://deno.land/std@0.224.0/crypto/mod.ts";
+import { callBitrixAPI, setCorrelationId } from "../_shared/bitrix/callBitrixAPI.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-evolution-signature, x-signature",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-evolution-signature, x-signature, x-corr-id",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
@@ -36,20 +36,20 @@ async function logStructured(service: any, log: any) {
   }
 }
 
-async function validateEvolutionSignature(req: Request, payload: any, instanceName: string, service: any): Promise<boolean> {
+async function validateEvolutionSignature(req: Request, payload: any, instanceId: string, service: any): Promise<boolean> {
   const signature = req.headers.get("x-evolution-signature") || req.headers.get("x-signature");
   if (!signature) return true; // No signature provided
 
   try {
-    // Get instance secret from wa_sessions table
-    const { data: session } = await service
-      .from("wa_sessions")
-      .select("webhook_secret")
-      .eq("evo_instance_id", instanceName)
+    // Get instance secret from wa_instances table via uuid
+    const { data: instance } = await service
+      .from("wa_instances")
+      .select("webhook_secret, secret")
+      .eq("id", instanceId)
       .limit(1)
       .maybeSingle();
 
-    const secret = session?.webhook_secret || Deno.env.get("EVOLUTION_WEBHOOK_SECRET");
+    const secret = instance?.webhook_secret || instance?.secret || Deno.env.get("EVOLUTION_WEBHOOK_SECRET");
     if (!secret) return true; // No secret configured
 
     const expectedSig = await createHmac("sha256", new TextEncoder().encode(secret))
@@ -63,14 +63,72 @@ async function validateEvolutionSignature(req: Request, payload: any, instanceNa
   }
 }
 
+async function upsertContact(service: any, tenantId: string, phone: string, name?: string) {
+  const phoneE164 = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`;
+  
+  const { data: existing } = await service
+    .from("contacts")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("phone_e164", phoneE164)
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.id) return existing.id;
+
+  const { data: created, error } = await service
+    .from("contacts")
+    .insert({
+      tenant_id: tenantId,
+      phone_e164: phoneE164,
+      display_name: name || phoneE164,
+      created_at: new Date().toISOString()
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  return created?.id;
+}
+
+async function findLineIdByInstance(service: any, tenantId: string, waInstanceId: string): Promise<string | null> {
+  const { data } = await service
+    .from("open_channel_bindings")
+    .select("line_id")
+    .eq("tenant_id", tenantId)
+    .eq("wa_instance_id", waInstanceId)
+    .limit(1)
+    .maybeSingle();
+  
+  return data?.line_id || null;
+}
+
+async function sendToBitrixWithRetry(tenantId: string, method: string, params: any, retries = 3): Promise<any> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await callBitrixAPI(tenantId, method, params);
+    } catch (e) {
+      console.error(`[evolution-webhook-v2] Bitrix send attempt ${attempt}/${retries}:`, e);
+      if (attempt === retries) throw e;
+      
+      // Exponential backoff: 1s, 3s, 7s
+      const delay = Math.pow(2, attempt) * 500 + Math.random() * 500;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 serve(async (req) => {
+  const corrId = req.headers.get("x-corr-id") || crypto.randomUUID();
+  setCorrelationId(corrId);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   if (req.method === "GET") {
     return new Response(
-      JSON.stringify({ ok: true, message: "evolution-webhook-v2 alive" }),
+      JSON.stringify({ ok: true, message: "evolution-webhook-v2 alive", corrId }),
       { headers: corsHeaders }
     );
   }
@@ -95,15 +153,37 @@ serve(async (req) => {
       );
     }
 
-    // Validate HMAC signature
-    const isValidSignature = await validateEvolutionSignature(req, payload, instanceName, service);
+    console.log(`[evolution-webhook-v2] Processing ${corrId}:`, { instanceName, event: payload?.event });
+
+    // Find wa_instance by name/label to get tenant and UUID
+    const { data: instance } = await service
+      .from("wa_instances")
+      .select("id, tenant_id, webhook_secret, secret")
+      .eq("label", instanceName)
+      .limit(1)
+      .maybeSingle();
+
+    if (!instance) {
+      console.warn(`[evolution-webhook-v2] No wa_instance found for:`, instanceName);
+      return new Response(
+        JSON.stringify({ ok: true, info: "Instance not found" }),
+        { headers: corsHeaders }
+      );
+    }
+
+    const tenantId = instance.tenant_id;
+    const waInstanceId = instance.id;
+
+    // Validate HMAC signature by instance
+    const isValidSignature = await validateEvolutionSignature(req, payload, waInstanceId, service);
 
     await logStructured(service, {
       category: "SECURITY",
+      tenantId,
       instanceId: instanceName,
       provider: "evolution",
       valid_signature: isValidSignature,
-      data: { event: payload.event, signature_valid: isValidSignature }
+      data: { event: payload.event, signature_valid: isValidSignature, corrId }
     });
 
     if (!isValidSignature) {
@@ -113,58 +193,39 @@ serve(async (req) => {
       );
     }
 
-    console.log("[evolution-webhook-v2] Incoming:", payload);
-
     const eventType = payload?.event || payload?.type || "unknown";
     const state = payload?.state || payload?.status;
 
-    // Find session by evo_instance_id to get user_id and optional Bitrix line
+    // Update wa_sessions heartbeat if exists
     const { data: session } = await service
       .from("wa_sessions")
-      .select("*")
-      .eq("evo_instance_id", instanceName)
+      .select("id")
+      .eq("instance_id", waInstanceId)
       .limit(1)
       .maybeSingle();
 
-    const userId = session?.user_id || null;
-    const bitrixLineId = session?.bitrix_line_id || null;
-
-    // Update wa_sessions heartbeat and optional status
     if (session?.id) {
       const patch: any = { last_sync_at: new Date().toISOString() };
       if (state) patch.status = String(state).toUpperCase();
       await service.from("wa_sessions").update(patch).eq("id", session.id);
     }
 
-    // Only proceed with message flow if we can identify owner
-    if (!userId) {
-      console.warn("[evolution-webhook-v2] No session/user found for instance:", instanceName);
-      return new Response(
-        JSON.stringify({ ok: true, info: "No owner session found" }),
-        { headers: corsHeaders }
-      );
-    }
-
     // Handle message events (inbound)
     if (eventType.toLowerCase().includes("message") || payload?.message) {
       const msg = payload?.message || payload;
-      const direction = "in";
       const evolutionMessageId = String(msg?.id || msg?.messageId || msg?.message_id || "");
 
-      const text = msg?.text || msg?.body || msg?.content;
-      const mediaUrl = msg?.mediaUrl || msg?.fileUrl || msg?.file_url || undefined;
-      const fromNumber = msg?.from || msg?.sender?.phone || msg?.sender?.id || "";
-      const contactPhone = String(fromNumber || "").replace(/[^\d+]/g, "");
-
-      // Idempotency: skip if already stored
+      // Idempotency: skip if already processed
       if (evolutionMessageId) {
-        const { data: dup } = await service
+        const { data: existing } = await service
           .from("messages")
           .select("id")
           .eq("evolution_message_id", evolutionMessageId)
           .limit(1)
           .maybeSingle();
-        if (dup?.id) {
+        
+        if (existing?.id) {
+          console.log(`[evolution-webhook-v2] Duplicate message ignored: ${evolutionMessageId}`);
           return new Response(
             JSON.stringify({ ok: true, info: "Duplicate ignored" }),
             { headers: corsHeaders }
@@ -172,33 +233,51 @@ serve(async (req) => {
         }
       }
 
-      // Resolve or create conversation by (user_id + contact_phone + evolution_instance)
+      const text = msg?.text || msg?.body || msg?.content || "";
+      const mediaUrl = msg?.mediaUrl || msg?.fileUrl || msg?.file_url || null;
+      const fromNumber = msg?.from || msg?.sender?.phone || msg?.sender?.id || "";
+      const contactPhone = String(fromNumber || "").replace(/[^\d+]/g, "");
+      const contactName = msg?.sender?.name || msg?.pushname || null;
+
+      if (!contactPhone) {
+        console.warn(`[evolution-webhook-v2] No contact phone found in message`);
+        return new Response(
+          JSON.stringify({ ok: true, info: "No contact phone" }),
+          { headers: corsHeaders }
+        );
+      }
+
+      // Upsert contact by phone_e164
+      const contactId = await upsertContact(service, tenantId, contactPhone, contactName);
+
+      // Resolve or create conversation
       const { data: existingConv } = await service
         .from("conversations")
         .select("*")
-        .eq("user_id", userId)
-        .eq("contact_phone", contactPhone)
-        .eq("evolution_instance", instanceName)
+        .eq("tenant_id", tenantId)
+        .eq("instance_id", waInstanceId)
+        .eq("contact_id", contactId)
         .limit(1)
         .maybeSingle();
 
       let conversationId = existingConv?.id;
+      let openlinesChatId = existingConv?.openlines_chat_id;
+
       if (!conversationId) {
-        const ins = await service
+        const { data: newConv, error } = await service
           .from("conversations")
           .insert({
-            user_id: userId,
-            contact_phone: contactPhone || "unknown",
-            contact_name: msg?.sender?.name || null,
-            evolution_instance: instanceName,
-            openlines_chat_id: null,
-            last_message_at: new Date().toISOString(),
-            status: "open"
+            tenant_id: tenantId,
+            instance_id: waInstanceId,
+            contact_id: contactId,
+            status: "open",
+            last_message_at: new Date().toISOString()
           })
           .select("id")
           .maybeSingle();
-        if (ins.error) throw ins.error;
-        conversationId = ins.data?.id;
+        
+        if (error) throw error;
+        conversationId = newConv?.id;
       } else {
         await service
           .from("conversations")
@@ -206,94 +285,83 @@ serve(async (req) => {
           .eq("id", conversationId);
       }
 
-      // Ensure Bitrix chat via bitrix-openlines wrapper
-      let chatId = existingConv?.openlines_chat_id || null;
-      if (!chatId) {
-        const ensureRes = await fetch(
-          `https://${new URL(SUPABASE_URL).host.replace(".supabase.co", "")}.functions.supabase.co/bitrix-openlines`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "openlines.ensureSession",
-              payload: { 
-                tenantId: userId, 
-                lineId: bitrixLineId || undefined,
-                instanceId: null,
-                contact: { phone: contactPhone } 
-              },
-            }),
-          },
-        ).then((r) => r.json()).catch((e) => ({ success: false, error: String(e) }));
-
-        if (ensureRes?.success && ensureRes?.data?.chatId) {
-          chatId = String(ensureRes.data.chatId);
-          await service.from("conversations").update({ openlines_chat_id: chatId }).eq("id", conversationId);
-        }
-      }
+      // Find line_id via open_channel_bindings
+      const lineId = await findLineIdByInstance(service, tenantId, waInstanceId);
 
       // Persist inbound message
       await service.from("messages").insert({
         conversation_id: conversationId,
-        direction,
+        direction: "in",
         message_type: mediaUrl ? "media" : "text",
         content: text || (mediaUrl ? "[media]" : ""),
-        media_url: mediaUrl || null,
+        media_url: mediaUrl,
         evolution_message_id: evolutionMessageId || null,
-        sender_name: msg?.sender?.name || null,
+        sender_name: contactName,
         status: "received",
         delivery_status: "received"
       });
 
       await logStructured(service, {
         category: "INBOUND",
-        tenantId: userId,
+        tenantId,
         instanceId: instanceName,
         conversationId,
-        chatId,
+        chatId: openlinesChatId,
         direction: "in",
         provider: "evolution",
         msgKey: evolutionMessageId,
-        data: { text, mediaUrl, contactPhone }
+        data: { text, mediaUrl, contactPhone, contactName, lineId, corrId }
       });
 
-      // Deliver to Open Lines
-      await fetch(
-        `https://${new URL(SUPABASE_URL).host.replace(".supabase.co", "")}.functions.supabase.co/bitrix-openlines`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "openlines.sendMessage",
-            payload: {
-              tenantId: userId,
-              bitrixChatId: chatId || null,
-              text: text || (mediaUrl ? mediaUrl : undefined),
-              fileUrl: mediaUrl || undefined,
-              ensure: chatId
-                ? undefined
-                : {
-                    tenantId: userId,
-                    lineId: bitrixLineId || undefined,
-                    instanceId: null,
-                    contact: { phone: contactPhone, name: msg?.sender?.name || null },
-                  },
-            },
-          }),
-        },
-      )
-        .then((r) => r.json())
-        .then(async (sendRes) => {
-          const returnedChatId = sendRes?.data?.chatId;
-          if (!chatId && returnedChatId && conversationId) {
-            await service.from("conversations").update({ openlines_chat_id: returnedChatId }).eq("id", conversationId);
+      // Send to Bitrix Open Lines via imconnector.send.messages
+      if (lineId) {
+        try {
+          const messageData = {
+            CONNECTOR: "evolution_whatsapp",
+            LINE: lineId,
+            MESSAGES: [{
+              USER: {
+                ID: contactPhone,
+                NAME: contactName || contactPhone
+              },
+              MESSAGE: {
+                TEXT: text || "",
+                FILE_URL: mediaUrl || undefined
+              }
+            }]
+          };
+
+          const bitrixResult = await sendToBitrixWithRetry(tenantId, "imconnector.send.messages", messageData);
+          
+          // Update conversation with Bitrix chat ID if returned
+          const returnedChatId = bitrixResult?.result?.chat_id || bitrixResult?.chat_id;
+          if (returnedChatId && !openlinesChatId) {
+            await service
+              .from("conversations")
+              .update({ openlines_chat_id: String(returnedChatId) })
+              .eq("id", conversationId);
           }
-        })
-        .catch((e) => console.error("[evolution-webhook-v2] OL send error:", e));
+
+          console.log(`[evolution-webhook-v2] Message sent to Bitrix line ${lineId}`);
+        } catch (e) {
+          console.error(`[evolution-webhook-v2] Failed to send to Bitrix:`, e);
+          await logStructured(service, {
+            category: "OUTBOUND",
+            tenantId,
+            instanceId: instanceName,
+            conversationId,
+            direction: "out",
+            provider: "bitrix",
+            data: { error: String(e), lineId, corrId }
+          });
+        }
+      } else {
+        console.warn(`[evolution-webhook-v2] No lineId found for instance ${waInstanceId}`);
+      }
     }
 
     return new Response(
-      JSON.stringify({ ok: true }),
+      JSON.stringify({ ok: true, corrId }),
       { headers: corsHeaders }
     );
 
@@ -303,11 +371,11 @@ serve(async (req) => {
       category: "SECURITY",
       provider: "evolution",
       valid_signature: false,
-      data: { error: error.message }
+      data: { error: error.message, corrId }
     });
 
     return new Response(
-      JSON.stringify({ ok: false, error: error.message }),
+      JSON.stringify({ ok: false, error: error.message, corrId }),
       { status: 500, headers: corsHeaders }
     );
   }
