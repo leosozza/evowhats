@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useSupabaseAuth } from "@/hooks/useSupabaseAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import AuthPanel from "@/components/AuthPanel";
 import ConfigurationPanel from "@/components/ConfigurationPanel";
 import { Diagnostics } from "@/components/Diagnostics";
@@ -85,7 +86,20 @@ const Index = () => {
         </TabsList>
 
         <TabsContent value="monitor" className="space-y-6">
-          <Diagnostics />
+          <div className="text-center space-y-4">
+            <h2 className="text-2xl font-semibold">Bem-vindo ao EvoWhats!</h2>
+            <p className="text-muted-foreground">
+              Configure sua integração WhatsApp + Bitrix24 usando nosso wizard de configuração.
+            </p>
+            <div className="flex gap-4 justify-center">
+              <Button asChild>
+                <a href="/wizard">Iniciar Configuração</a>
+              </Button>
+              <Button variant="outline" asChild>
+                <a href="/diagnostics">Ver Diagnósticos</a>
+              </Button>
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="config" className="space-y-6">
@@ -93,7 +107,15 @@ const Index = () => {
         </TabsContent>
 
         <TabsContent value="logs" className="space-y-6">
-          <Diagnostics />
+          <div className="text-center space-y-4">
+            <h2 className="text-2xl font-semibold">Sistema de Logs</h2>
+            <p className="text-muted-foreground">
+              Acesse os diagnósticos completos do sistema para ver logs e métricas.
+            </p>
+            <Button asChild>
+              <a href="/diagnostics">Ver Diagnósticos Completos</a>
+            </Button>
+          </div>
         </TabsContent>
 
         <TabsContent value="integration" className="space-y-6">
