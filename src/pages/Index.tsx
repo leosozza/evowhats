@@ -6,8 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import AuthPanel from "@/components/AuthPanel";
 import ConfigurationPanel from "@/components/ConfigurationPanel";
-import WhatsAppWebMonitor from "@/components/WhatsAppWebMonitor";
-import RealMessageMonitor from "@/components/RealMessageMonitor";
+import { Diagnostics } from "@/components/Diagnostics";
 import BitrixConnectionMonitor from "@/components/bitrix/BitrixConnectionMonitor";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageSquare, Settings, Monitor, GitBranch } from "lucide-react";
@@ -86,7 +85,7 @@ const Index = () => {
         </TabsList>
 
         <TabsContent value="monitor" className="space-y-6">
-          <WhatsAppWebMonitor />
+          <Diagnostics />
         </TabsContent>
 
         <TabsContent value="config" className="space-y-6">
@@ -94,7 +93,7 @@ const Index = () => {
         </TabsContent>
 
         <TabsContent value="logs" className="space-y-6">
-          <RealMessageMonitor />
+          <Diagnostics />
         </TabsContent>
 
         <TabsContent value="integration" className="space-y-6">
