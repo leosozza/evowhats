@@ -41,14 +41,25 @@ async function getUserId(req: Request) {
 }
 
 async function upsertBinding(service: ReturnType<typeof createClient>, tenantId: string, lineId: string, waInstanceId: string, createdBy: string) {
-  // Assumimos tabela open_channel_bindings existente via migração
-  return service.from("open_channel_bindings").upsert({
-    tenant_id: tenantId,
-    line_id: lineId,
-    wa_instance_id: waInstanceId,
-    created_by: createdBy,
-    created_at: new Date().toISOString(),
-  }, { onConflict: "tenant_id,line_id" });
+  // Try schema with wa_instance_id, fallback to instance_id
+  try {
+    return await service.from("open_channel_bindings").upsert({
+      tenant_id: tenantId,
+      line_id: lineId,
+      wa_instance_id: waInstanceId,
+      created_by: createdBy,
+      created_at: new Date().toISOString(),
+    }, { onConflict: "tenant_id,line_id" });
+  } catch (e: any) {
+    // Fallback if column doesn't exist
+    return await service.from("open_channel_bindings").upsert({
+      tenant_id: tenantId,
+      line_id: lineId,
+      instance_id: waInstanceId,
+      created_by: createdBy,
+      created_at: new Date().toISOString(),
+    }, { onConflict: "tenant_id,line_id" });
+  }
 }
 
 serve(async (req) => {

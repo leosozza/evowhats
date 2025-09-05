@@ -92,15 +92,26 @@ async function upsertContact(service: any, tenantId: string, phone: string, name
 }
 
 async function findLineIdByInstance(service: any, tenantId: string, waInstanceId: string): Promise<string | null> {
-  const { data } = await service
+  // Try new schema column
+  let { data, error } = await service
     .from("open_channel_bindings")
     .select("line_id")
     .eq("tenant_id", tenantId)
     .eq("wa_instance_id", waInstanceId)
     .limit(1)
     .maybeSingle();
-  
-  return data?.line_id || null;
+
+  if (data?.line_id) return data.line_id;
+
+  // Fallback to legacy column name
+  const res2 = await service
+    .from("open_channel_bindings")
+    .select("line_id")
+    .eq("tenant_id", tenantId)
+    .eq("instance_id", waInstanceId)
+    .limit(1)
+    .maybeSingle();
+  return res2.data?.line_id || null;
 }
 
 async function sendToBitrixWithRetry(tenantId: string, method: string, params: any, retries = 3): Promise<any> {
