@@ -55,11 +55,14 @@ class EvolutionInstanceManager {
 
   // === API REST Evolution via sua edge function ===
   private async evo(action: string, path: string, method = "GET", payload?: any) {
-    const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
+    const r = await supabase.functions.invoke('evolution-connector-v2', {
       body: { action, path, method, payload }
-    });
-    if (error) throw error;
-    return data;
+    }).catch(() => null);
+    if (!r?.data?.ok) {
+      console.warn('[EvolutionManager] API offline:', r?.data?.error || r?.error || 'network');
+      return null;
+    }
+    return r.data;
   }
 
   async createInstance(instanceName: string) {
@@ -69,6 +72,7 @@ class EvolutionInstanceManager {
       this.notify();
       return true;
     }
+    console.warn('[EvolutionManager] create instance offline:', r?.error || 'network');
     return false;
   }
 
@@ -79,11 +83,11 @@ class EvolutionInstanceManager {
     this.notify();
 
     // v1: dispara conexão (que gera QR)
-    await this.evo('proxy', `/instance/connect/${encodeURIComponent(instanceName)}`, 'GET').catch(()=>{});
+    await this.evo('proxy', `/instance/connect/${encodeURIComponent(instanceName)}`, 'GET');
     // v2 fallback: já solicitamos qrcode no create, então só segue
 
     // tenta obter QR (se sua versão suportar endpoint qrcode); se 404, o WS entregará via QRCODE_UPDATED
-    const qrTry = await this.evo('proxy', `/instance/qrcode/${encodeURIComponent(instanceName)}`, 'GET').catch(()=>null);
+    const qrTry = await this.evo('proxy', `/instance/qrcode/${encodeURIComponent(instanceName)}`, 'GET');
     const base64 = qrTry?.ok ? (qrTry.data?.base64 || qrTry.data?.qrcode) : null;
 
     this.attachSocket(instanceName);
@@ -166,7 +170,10 @@ class EvolutionInstanceManager {
   }
 
   async deleteInstance(instanceName: string) {
-    await this.evo('proxy', `/instance/delete/${encodeURIComponent(instanceName)}`, 'DELETE').catch(()=>{});
+    const r = await this.evo('proxy', `/instance/delete/${encodeURIComponent(instanceName)}`, 'DELETE');
+    if (!r?.ok) {
+      console.warn('[EvolutionManager] delete instance offline:', r?.error || 'network');
+    }
     const c = this.connections.get(instanceName);
     try { c?.socket?.disconnect(); } catch {}
     this.connections.delete(instanceName);

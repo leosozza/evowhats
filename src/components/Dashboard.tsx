@@ -32,45 +32,35 @@ const Dashboard = () => {
           description: `API funcional com ${result?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
         });
       } else {
-        let errorMsg = "API Evolution não está funcional";
+        let errorMsg = "Desconectada";
         
         if (result?.steps) {
           if (!result.steps.config?.ok) {
-            errorMsg = "Configuração incompleta: verifique EVOLUTION_BASE_URL e EVOLUTION_API_KEY";
+            errorMsg = "Desconectada (configuração incompleta)";
           } else {
             const failedStep = Object.entries(result.steps).find(([_, step]: [string, any]) => !step.ok);
             if (failedStep) {
-              const [stepName, stepData] = failedStep as [string, any];
-              errorMsg = `Falha em ${stepName}: ${stepData.error || `Status ${stepData.status}`}`;
-              if (stepData.url) {
-                errorMsg += ` (URL: ${stepData.url})`;
-              }
+              const [_, stepData] = failedStep as [string, any];
+              const reason = stepData.reason || stepData.error || `status ${stepData.status}`;
+              errorMsg = `Desconectada (${reason})`;
             }
           }
         } else if (result?.error) {
-          errorMsg = result.error;
+          errorMsg = `Desconectada (${result.error})`;
         }
         
         toast({
-          title: "❌ API Evolution",
+          title: "Evolution API",
           description: errorMsg,
-          variant: "destructive",
         });
       }
     } catch (error: any) {
       console.error("Error checking Evolution API:", error);
       setApiStatus(prev => ({ ...prev, evolutionApi: false }));
       
-      let errorMsg = "Erro desconhecido";
-      let details = "";
-      
-      errorMsg = error?.message || String(error);
-      details = "";
-      
       toast({
-        title: "❌ Erro Evolution",
-        description: `${errorMsg}${details ? ` (${details})` : ''}`,
-        variant: "destructive",
+        title: "Evolution API",
+        description: "Desconectada (diagnóstico indisponível)",
       });
     }
   };
@@ -193,31 +183,29 @@ const Dashboard = () => {
                     } else {
                       setApiStatus(prev => ({ ...prev, evolutionApi: false }));
                       
-                      // Show detailed step results
-                      const failedSteps = Object.entries(result?.steps || {})
-                        .filter(([_, step]: [string, any]) => !step.ok)
-                        .map(([name, step]: [string, any]) => 
-                          `${name}: ${step.error || `Status ${step.status}`}${step.details ? ` - ${step.details}` : ''}`
-                        );
+                      // Show offline status instead of error
+                      let reason = "offline";
+                      if (result?.steps) {
+                        const failedSteps = Object.entries(result.steps)
+                          .filter(([_, step]: [string, any]) => !step.ok)
+                          .map(([name, step]: [string, any]) => step.reason || step.error || `${name}_failed`);
+                        reason = failedSteps.join(', ') || reason;
+                      } else if (result?.error) {
+                        reason = result.error;
+                      }
                       
                       toast({
-                        title: "❌ Evolution Falha",
-                        description: failedSteps.length > 0 
-                          ? failedSteps.join('\n') 
-                          : "Ver console para detalhes",
-                        variant: "destructive",
+                        title: "Evolution API",
+                        description: `Desconectada (${reason})`,
                       });
                     }
                   } catch (e: any) {
                     console.error("Erro no diagnóstico:", e);
                     setApiStatus(prev => ({ ...prev, evolutionApi: false }));
                     
-                    let errorMsg = e?.message || String(e);
-                    
                     toast({
-                      title: "❌ Evolution Erro",
-                      description: errorMsg,
-                      variant: "destructive",
+                      title: "Evolution API",
+                      description: "Desconectada (erro de rede)",
                     });
                   }
                 }}
