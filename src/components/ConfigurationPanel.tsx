@@ -51,7 +51,7 @@ const ConfigurationPanel = () => {
           evolution_base_url: evolutionConfig.baseUrl,
           evolution_api_key: evolutionConfig.apiKey,
           evolution_instance_name: evolutionConfig.instanceName || 'default'
-        });
+        }, { onConflict: 'user_id' });
 
       if (error) throw error;
 
