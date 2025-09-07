@@ -154,7 +154,7 @@ async function upsertSessionForLine(service: ReturnType<typeof svc>, userId: str
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-  if (req.method !== "POST") return ko("Method not allowed");
+  if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: CORS });
 
   const service = svc();
   let user;

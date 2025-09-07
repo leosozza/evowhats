@@ -3,9 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Activity, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
-
-import { callEvolution } from "@/utils/callEvolution";
+import { api } from "@/api/provider";
+import { unwrap, isErr } from "@/core/result";
 
 interface APIStatus {
   evolutionApi: boolean;
@@ -21,32 +20,37 @@ const Dashboard = () => {
 
   const checkEvolutionApi = async () => {
     try {
-      const result = await callEvolution("diag");
+      const result = await api.evolution.diag();
       
-      const isHealthy = result?.ok === true;
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Evolution API offline");
+      }
+      
+      const diagData = result.value;
+      const isHealthy = diagData?.ok === true;
       setApiStatus(prev => ({ ...prev, evolutionApi: isHealthy }));
       
       if (isHealthy) {
         toast({
           title: "✅ API Evolution",
-          description: `API funcional com ${result?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
+          description: `API funcional com ${diagData?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
         });
       } else {
         let errorMsg = "Desconectada";
         
-        if (result?.steps) {
-          if (!result.steps.config?.ok) {
+        if (diagData?.steps) {
+          if (!diagData.steps.config?.ok) {
             errorMsg = "Desconectada (configuração incompleta)";
           } else {
-            const failedStep = Object.entries(result.steps).find(([_, step]: [string, any]) => !step.ok);
+            const failedStep = Object.entries(diagData.steps).find(([_, step]: [string, any]) => !step.ok);
             if (failedStep) {
               const [_, stepData] = failedStep as [string, any];
               const reason = stepData.reason || stepData.error || `status ${stepData.status}`;
               errorMsg = `Desconectada (${reason})`;
             }
           }
-        } else if (result?.error) {
-          errorMsg = `Desconectada (${result.error})`;
+        } else if (diagData?.error) {
+          errorMsg = `Desconectada (${diagData.error})`;
         }
         
         toast({
@@ -67,13 +71,14 @@ const Dashboard = () => {
 
   const checkBitrixApi = async () => {
     try {
-      const bitrixCheck = await supabase.functions.invoke("bitrix-token-refresh", {
-        body: {},
-      });
+      const result = await api.bitrix.tokenStatus();
       
-      console.log("Bitrix API response:", bitrixCheck);
-
-      const bitrixOk = !bitrixCheck.error && bitrixCheck.data?.ok === true;
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Bitrix API offline");
+      }
+      
+      const bitrixData = result.value;
+      const bitrixOk = bitrixData?.ok === true;
 
       setApiStatus(prev => ({
         ...prev,
@@ -83,21 +88,21 @@ const Dashboard = () => {
       if (bitrixOk) {
         toast({
           title: "✅ API Bitrix",
-          description: "API Bitrix está funcional",
+          description: `API Bitrix está funcional - Portal: ${bitrixData.portal || 'N/A'}`,
         });
       } else {
         toast({
-          title: "❌ API Bitrix",
-          description: bitrixCheck.error?.message || "API Bitrix não está funcional",
-          variant: "destructive",
+          title: "API Bitrix",
+          description: "API Bitrix não está funcional",
         });
       }
     } catch (error: any) {
       console.error("Error checking Bitrix API:", error);
+      setApiStatus(prev => ({ ...prev, bitrixApi: false }));
+      
       toast({
-        title: "❌ Erro Bitrix",
-        description: error.message,
-        variant: "destructive",
+        title: "API Bitrix",
+        description: `Desconectada (${error.message})`,
       });
     }
   };

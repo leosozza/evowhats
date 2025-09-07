@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Eye } from "lucide-react";
-import { evolutionApi, EvolutionApiError } from "@/lib/evolutionApi";
+import { api } from "@/api/provider";
+import { unwrap, isErr } from "@/core/result";
 
 export default function EvolutionInstances() {
   const navigate = useNavigate();
@@ -28,8 +28,13 @@ export default function EvolutionInstances() {
         action: 'loadInstances'
       }));
 
-      const data = await evolutionApi.listInstances();
-      const instanceList = data?.instances || [];
+      const result = await api.evolution.list();
+      
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Failed to load instances");
+      }
+
+      const instanceList = result.value.instances || [];
       setInstances(instanceList);
       
       // Load connection states for each instance
@@ -48,17 +53,9 @@ export default function EvolutionInstances() {
     } catch (error: any) {
       console.error("Error loading instances:", error);
       
-      let errorMsg = "Erro desconhecido";
-      if (error instanceof EvolutionApiError) {
-        errorMsg = error.message;
-        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
-      } else {
-        errorMsg = error.message || String(error);
-      }
-      
       toast({
         title: "❌ Erro",
-        description: errorMsg,
+        description: error.message || "Erro desconhecido",
         variant: "destructive",
       });
     } finally {
@@ -68,12 +65,10 @@ export default function EvolutionInstances() {
 
   const loadOpenChannels = async () => {
     try {
-      const { data, error } = await supabase.functions.invoke("bitrix-openlines", {
-        body: { action: "list_lines" },
-      });
+      const result = await api.bitrix.listLines();
       
-      if (!error && data?.lines) {
-        setOpenChannels(data.lines);
+      if (!isErr(result) && result.value?.lines) {
+        setOpenChannels(result.value.lines);
       }
     } catch (error) {
       console.error("Error loading open channels:", error);
@@ -89,8 +84,15 @@ export default function EvolutionInstances() {
         lineId
       }));
 
-      const data = await evolutionApi.getStatus(lineId);
-      const state = (data?.state || "unknown").toLowerCase();
+      const result = await api.evolution.status(lineId);
+      
+      if (isErr(result)) {
+        console.error(`Error checking state for line ${lineId}:`, result.error.message);
+        setConnectionStates(prev => ({ ...prev, [lineId]: "error" }));
+        return "error";
+      }
+
+      const state = (result.value?.state || "unknown").toLowerCase();
       setConnectionStates(prev => ({ ...prev, [lineId]: state }));
 
       return state;
@@ -115,12 +117,15 @@ export default function EvolutionInstances() {
         if (state === "connecting") {
           // Get QR code
           try {
-            const data = await evolutionApi.getQr(lineId);
+            const result = await api.evolution.qr(lineId);
             
-            if (data?.qr_base64) {
-              setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${data.qr_base64}` }));
-            } else if (data?.pairingCode) {
-              setQrCodes(prev => ({ ...prev, [lineId]: `pairing:${data.pairingCode}` }));
+            if (!isErr(result)) {
+              const qrData = result.value;
+              if (qrData?.qr_base64) {
+                setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${qrData.qr_base64}` }));
+              } else if (qrData?.base64) {
+                setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${qrData.base64}` }));
+              }
             }
           } catch (error) {
             console.error("Error getting QR:", error);
@@ -186,11 +191,15 @@ export default function EvolutionInstances() {
         lineId: newLineId
       }));
 
-      const data = await evolutionApi.ensureSession(newLineId);
+      const result = await api.evolution.ensure(newLineId);
+      
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Failed to create instance");
+      }
 
       toast({
         title: "✅ Sucesso",
-        description: `Instância ${data?.instanceName} criada/garantida`,
+        description: `Instância ${result.value?.instance} criada/garantida`,
       });
       
       setNewLineId("");
@@ -223,7 +232,11 @@ export default function EvolutionInstances() {
         lineId
       }));
 
-      const data = await evolutionApi.startSession(lineId);
+      const result = await api.evolution.start(lineId);
+      
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Failed to start session");
+      }
 
       toast({
         title: "✅ Sessão iniciada",
@@ -260,19 +273,16 @@ export default function EvolutionInstances() {
         lineId
       }));
 
-      const data = await evolutionApi.bindLine(instanceId, lineId);
+      const result = await api.evolution.bind(instanceId, lineId);
       
-      if (data?.warn) {
-        toast({
-          title: "⚠️ Aviso",
-          description: "Binding não persistido, mas funcionalidade continua disponível",
-        });
-      } else {
-        toast({
-          title: "✅ Sucesso",
-          description: `Instância vinculada ao canal ${lineId}`,
-        });
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Failed to bind line");
       }
+      
+      toast({
+        title: "✅ Sucesso",
+        description: `Instância vinculada ao canal ${lineId}`,
+      });
     } catch (error: any) {
       let errorMsg = "Erro desconhecido";
       if (error instanceof EvolutionApiError) {
@@ -310,7 +320,11 @@ export default function EvolutionInstances() {
         to: number
       }));
 
-      const data = await evolutionApi.testSend(lineId, number, "Teste de envio da instância Evolution");
+      const result = await api.evolution.testSend(lineId, number, "Teste de envio da instância Evolution");
+      
+      if (isErr(result)) {
+        throw new Error(result.error.message || "Failed to send test message");
+      }
 
       toast({
         title: "✅ Sucesso",
