@@ -1,4 +1,25 @@
-import { supabase } from "@/integrations/supabase/client";
+declare const BX24: any;
+
+export function buildBitrixAuthUrl(opts: {
+  clientId: string;
+  redirectUri: string;
+  scope: string;
+  state: string;
+}) {
+  const q = new URLSearchParams({
+    client_id: opts.clientId,
+    response_type: "code",
+    redirect_uri: opts.redirectUri,
+    scope: opts.scope,
+    state: opts.state,
+  });
+  return `https://oauth.bitrix.info/oauth/authorize?${q.toString()}`;
+}
+
+export function guessRedirectUri() {
+  // usa o domínio atual (funciona em preview e publicado)
+  return `${window.location.origin}/bitrix/callback`;
+}
 
 export function getPortalFromIframe(): string | null {
   try {
@@ -8,47 +29,25 @@ export function getPortalFromIframe(): string | null {
   }
 }
 
-export function openBitrixPopup(callback: (result: { ok: boolean; reason?: string }) => void) {
+export function openBitrixPopup(onDone: (ok: boolean, reason?: string) => void) {
   const state = crypto.randomUUID();
-  localStorage.setItem('bx_oauth_state', state);
-  
-  const portalUrl = getPortalFromIframe() || '';
-  if (!portalUrl) {
-    callback({ ok: false, reason: 'Portal URL não configurada' });
-    return;
-  }
+  sessionStorage.setItem("bx_oauth_state", state);
 
-  const domain = portalUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
-  const redirectUri = `${window.location.origin}/bitrix/callback`;
-  
-  const authUrl = new URL('https://oauth.bitrix.info/oauth/authorize/');
-  authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('client_id', 'local.676be862007c97.98291528'); 
-  authUrl.searchParams.set('redirect_uri', redirectUri);
-  authUrl.searchParams.set('state', state);
-  authUrl.searchParams.set('domain', domain);
+  const clientId = "local.676be862007c97.98291528";
+  const redirectUri = guessRedirectUri();
+  const scope = "imopenlines imconnector im placement crm user";
 
-  const popup = window.open(
-    authUrl.toString(),
-    'bitrix-oauth',
-    'width=500,height=600,scrollbars=yes,resizable=yes'
-  );
+  const url = buildBitrixAuthUrl({ clientId, redirectUri, scope, state });
+  const w = window.open(url, "bx_oauth", "width=520,height=760");
 
-  const messageHandler = (event: MessageEvent) => {
-    if (event.data?.source === 'bitrix-oauth') {
-      window.removeEventListener('message', messageHandler);
-      callback(event.data);
+  const onMsg = (e: MessageEvent) => {
+    if (e.origin !== window.location.origin) return;
+    if (e.data?.source === "bitrix-oauth") {
+      window.removeEventListener("message", onMsg);
+      try { w?.close?.(); } catch {}
+      onDone(Boolean(e.data?.ok), e.data?.reason);
     }
   };
 
-  window.addEventListener('message', messageHandler);
-
-  // Check if popup was closed manually
-  const checkClosed = setInterval(() => {
-    if (popup?.closed) {
-      clearInterval(checkClosed);
-      window.removeEventListener('message', messageHandler);
-      callback({ ok: false, reason: 'Popup fechado pelo usuário' });
-    }
-  }, 1000);
+  window.addEventListener("message", onMsg);
 }

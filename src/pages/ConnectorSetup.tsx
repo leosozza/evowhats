@@ -45,7 +45,7 @@ export default function ConnectorSetup() {
         </div>
         <Button
           onClick={() =>
-            openBitrixPopup(async ({ ok, reason }) => {
+            openBitrixPopup(async (ok, reason) => {
               if (ok) {
                 await refreshToken();
                 toast({ title: "Bitrix conectado!" });

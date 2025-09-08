@@ -1,57 +1,40 @@
-import { useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 const BitrixCallback = () => {
-  const [searchParams] = useSearchParams();
-
   useEffect(() => {
-    const handleCallback = async () => {
-      const code = searchParams.get('code');
-      const state = searchParams.get('state');
-      const domain = searchParams.get('domain');
+    (async () => {
+      const p = new URLSearchParams(window.location.search);
+      const code = p.get("code");
+      const state = p.get("state");
+      const domain = p.get("domain");         // vem do Bitrix
+      const stored = sessionStorage.getItem("bx_oauth_state");
 
-      const savedState = localStorage.getItem('bx_oauth_state');
-      
-      if (!code || !state || state !== savedState) {
-        window.opener?.postMessage({ 
-          source: 'bitrix-oauth', 
-          ok: false, 
-          reason: 'State inválido ou código ausente' 
-        }, '*');
-        window.close();
-        return;
-      }
+      let payload = { ok: false, reason: "" as string };
 
       try {
-        const { data, error } = await supabase.functions.invoke('bitrix-oauth-exchange', {
-          body: { code, state, domain }
-        });
-
-        if (error || !data?.ok) {
-          throw new Error(data?.error || 'Falha na troca de token');
+        if (!code) { payload.reason = "missing_code"; }
+        else if (!state || state !== stored) { payload.reason = "invalid_state"; }
+        else {
+          const { data, error } = await supabase.functions.invoke(
+            "bitrix-oauth-exchange",
+            {
+              body: { code, state, domain },
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+          if (error) payload.reason = error.message || "exchange_failed";
+          else if (!data?.ok) payload.reason = data?.error || "exchange_failed";
+          else payload.ok = true;
         }
-
-        localStorage.removeItem('bx_oauth_state');
-        
-        window.opener?.postMessage({ 
-          source: 'bitrix-oauth', 
-          ok: true 
-        }, '*');
-        
-        window.close();
-      } catch (error: any) {
-        window.opener?.postMessage({ 
-          source: 'bitrix-oauth', 
-          ok: false, 
-          reason: error.message 
-        }, '*');
+      } catch (e: any) {
+        payload.reason = e?.message || "unknown";
+      } finally {
+        window.opener?.postMessage({ source: "bitrix-oauth", ...payload }, window.location.origin);
         window.close();
       }
-    };
-
-    handleCallback();
-  }, [searchParams]);
+    })();
+  }, []);
 
   return (
     <div className="flex items-center justify-center min-h-screen">
