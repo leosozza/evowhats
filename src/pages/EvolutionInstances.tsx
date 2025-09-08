@@ -31,7 +31,8 @@ export default function EvolutionInstances() {
       const result = await api.evolution.list();
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Failed to load instances");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Failed to load instances");
       }
 
       const instanceList = result.value.instances || [];
@@ -39,11 +40,8 @@ export default function EvolutionInstances() {
       
       // Load connection states for each instance
       for (const instance of instanceList) {
-        const instName = instance.instanceName || instance.instance?.instanceName;
-        if (instName) {
-          const lineId = instName.replace('evo_line_', '');
-          checkConnectionState(lineId);
-        }
+        const lineId = instance.id.replace('evo_line_', '');
+        checkConnectionState(lineId);
       }
       
       toast({
@@ -87,7 +85,8 @@ export default function EvolutionInstances() {
       const result = await api.evolution.status(lineId);
       
       if (isErr(result)) {
-        console.error(`Error checking state for line ${lineId}:`, result.error.message);
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        console.error(`Error checking state for line ${lineId}:`, errorMsg);
         setConnectionStates(prev => ({ ...prev, [lineId]: "error" }));
         return "error";
       }
@@ -194,7 +193,8 @@ export default function EvolutionInstances() {
       const result = await api.evolution.ensure(newLineId);
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Failed to create instance");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Failed to create instance");
       }
 
       toast({
@@ -207,13 +207,7 @@ export default function EvolutionInstances() {
     } catch (error: any) {
       console.error("Error creating instance:", error);
       
-      let errorMsg = "Erro desconhecido";
-      if (error instanceof EvolutionApiError) {
-        errorMsg = error.message;
-        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
-      } else {
-        errorMsg = error.message || String(error);
-      }
+      const errorMsg = error?.message || String(error) || "Erro desconhecido";
       
       toast({
         title: "❌ Erro",
@@ -235,7 +229,8 @@ export default function EvolutionInstances() {
       const result = await api.evolution.start(lineId);
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Failed to start session");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Failed to start session");
       }
 
       toast({
@@ -247,13 +242,7 @@ export default function EvolutionInstances() {
     } catch (error: any) {
       console.error("Error connecting instance:", error);
       
-      let errorMsg = "Erro desconhecido";
-      if (error instanceof EvolutionApiError) {
-        errorMsg = error.message;
-        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
-      } else {
-        errorMsg = error.message || String(error);
-      }
+      const errorMsg = error?.message || String(error) || "Erro desconhecido";
       
       toast({
         title: "❌ Erro",
@@ -276,7 +265,8 @@ export default function EvolutionInstances() {
       const result = await api.evolution.bind(instanceId, lineId);
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Failed to bind line");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Failed to bind line");
       }
       
       toast({
@@ -284,13 +274,7 @@ export default function EvolutionInstances() {
         description: `Instância vinculada ao canal ${lineId}`,
       });
     } catch (error: any) {
-      let errorMsg = "Erro desconhecido";
-      if (error instanceof EvolutionApiError) {
-        errorMsg = error.message;
-        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
-      } else {
-        errorMsg = error.message || String(error);
-      }
+      const errorMsg = error?.message || String(error) || "Erro desconhecido";
       
       toast({
         title: "❌ Erro",
@@ -323,7 +307,8 @@ export default function EvolutionInstances() {
       const result = await api.evolution.testSend(lineId, number, "Teste de envio da instância Evolution");
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Failed to send test message");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Failed to send test message");
       }
 
       toast({
@@ -333,13 +318,7 @@ export default function EvolutionInstances() {
     } catch (error: any) {
       console.error("Error sending test message:", error);
       
-      let errorMsg = "Erro desconhecido";
-      if (error instanceof EvolutionApiError) {
-        errorMsg = error.message;
-        if (error.details) errorMsg += ` - Status: ${error.statusCode}`;
-      } else {
-        errorMsg = error.message || String(error);
-      }
+      const errorMsg = error?.message || String(error) || "Erro desconhecido";
       
       toast({
         title: "❌ Erro",

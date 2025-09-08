@@ -5,6 +5,7 @@ import { Activity, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/api/provider";
 import { unwrap, isErr } from "@/core/result";
+import { supabase } from "@/integrations/supabase/client";
 
 interface APIStatus {
   evolutionApi: boolean;
@@ -23,7 +24,8 @@ const Dashboard = () => {
       const result = await api.evolution.diag();
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Evolution API offline");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Evolution API offline");
       }
       
       const diagData = result.value;
@@ -33,7 +35,7 @@ const Dashboard = () => {
       if (isHealthy) {
         toast({
           title: "✅ API Evolution",
-          description: `API funcional com ${diagData?.steps?.fetchInstances?.instanceCount || 0} instâncias`,
+          description: `API funcional com ${diagData?.steps?.fetchInstances?.instanceCount ?? 'N/A'} instâncias`,
         });
       } else {
         let errorMsg = "Desconectada";
@@ -42,10 +44,10 @@ const Dashboard = () => {
           if (!diagData.steps.config?.ok) {
             errorMsg = "Desconectada (configuração incompleta)";
           } else {
-            const failedStep = Object.entries(diagData.steps).find(([_, step]: [string, any]) => !step.ok);
+            const failedStep = Object.entries(diagData.steps).find(([_, step]: [string, any]) => !step?.ok);
             if (failedStep) {
               const [_, stepData] = failedStep as [string, any];
-              const reason = stepData.reason || stepData.error || `status ${stepData.status}`;
+              const reason = stepData?.reason || stepData?.error || `status ${stepData?.status}`;
               errorMsg = `Desconectada (${reason})`;
             }
           }
@@ -74,7 +76,8 @@ const Dashboard = () => {
       const result = await api.bitrix.tokenStatus();
       
       if (isErr(result)) {
-        throw new Error(result.error.message || "Bitrix API offline");
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+        throw new Error(errorMsg || "Bitrix API offline");
       }
       
       const bitrixData = result.value;
@@ -175,44 +178,7 @@ const Dashboard = () => {
                 size="sm" 
                 variant="outline" 
                 onClick={async () => {
-                  try {
-                    const result = await callEvolution("diag");
-                    console.log("Evolution diagnostic:", result);
-                    
-                    if (result?.ok === true) {
-                      setApiStatus(prev => ({ ...prev, evolutionApi: true }));
-                      toast({
-                        title: "✅ Evolution OK",
-                        description: `Diagnóstico completo em ${result.totalMs}ms`,
-                      });
-                    } else {
-                      setApiStatus(prev => ({ ...prev, evolutionApi: false }));
-                      
-                      // Show offline status instead of error
-                      let reason = "offline";
-                      if (result?.steps) {
-                        const failedSteps = Object.entries(result.steps)
-                          .filter(([_, step]: [string, any]) => !step.ok)
-                          .map(([name, step]: [string, any]) => step.reason || step.error || `${name}_failed`);
-                        reason = failedSteps.join(', ') || reason;
-                      } else if (result?.error) {
-                        reason = result.error;
-                      }
-                      
-                      toast({
-                        title: "Evolution API",
-                        description: `Desconectada (${reason})`,
-                      });
-                    }
-                  } catch (e: any) {
-                    console.error("Erro no diagnóstico:", e);
-                    setApiStatus(prev => ({ ...prev, evolutionApi: false }));
-                    
-                    toast({
-                      title: "Evolution API",
-                      description: "Desconectada (erro de rede)",
-                    });
-                  }
+                  await checkEvolutionApi();
                 }}
                 className="w-full"
               >
@@ -222,20 +188,20 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const result = await callEvolution("diag");
-                    console.log("Evolution diagnostic full:", result);
+                    const result = await api.evolution.diag();
+                    if (isErr(result)) {
+                      throw new Error(result.error instanceof Error ? result.error.message : String(result.error));
+                    }
                     
-                    const diagnosticText = JSON.stringify(result, null, 2);
+                    const diagnosticText = JSON.stringify(result.value, null, 2);
                     
                     toast({
-                      title: result?.ok ? "✅ Evolution OK" : "❌ Evolution Falha",
-                      description: result?.ok 
-                        ? `Diagnóstico completo em ${result.totalMs}ms` 
+                      title: result.value?.ok ? "✅ Evolution OK" : "❌ Evolution Falha",
+                      description: result.value?.ok 
+                        ? "Diagnóstico completo" 
                         : "Ver console para detalhes completos",
-                      variant: result?.ok ? "default" : "destructive",
                     });
                     
-                    // Show alert with full details
                     if (window.confirm(`Diagnóstico Evolution API:\n\n${diagnosticText}\n\nCopiar para clipboard?`)) {
                       navigator.clipboard?.writeText(diagnosticText);
                     }
@@ -298,18 +264,18 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const result = await callEvolution("list_instances");
-                    console.log("Evolution test result:", result);
+                    const result = await api.evolution.list();
+                    if (isErr(result)) {
+                      throw new Error(result.error instanceof Error ? result.error.message : String(result.error));
+                    }
                     
-                    const instances = result?.instances || [];
+                    const instances = result.value?.instances || [];
                     toast({
                       title: "✅ Evolution OK",
                       description: `${instances.length} instâncias encontradas`,
-                      variant: "default",
                     });
                     
-                    // Show raw JSON in modal/alert for debugging
-                    const rawResponse = JSON.stringify(result, null, 2);
+                    const rawResponse = JSON.stringify(result.value, null, 2);
                     if (window.confirm(`Raw Response:\n\n${rawResponse}\n\nCopy to clipboard?`)) {
                       navigator.clipboard?.writeText(rawResponse);
                     }
@@ -338,14 +304,14 @@ const Dashboard = () => {
                 size="sm" 
                 onClick={async () => {
                   try {
-                    const { data, error } = await supabase.functions.invoke("bitrix-token-refresh", {
-                      body: {},
-                    });
-                    console.log("Bitrix test:", { data, error });
+                    const result = await api.bitrix.tokenStatus();
+                    if (isErr(result)) {
+                      throw new Error(result.error instanceof Error ? result.error.message : String(result.error));
+                    }
+                    
                     toast({
-                      title: error ? "❌ Bitrix Falha" : "✅ Bitrix OK",
-                      description: error?.message || (data?.refreshed ? "Token atualizado" : "Token válido"),
-                      variant: error ? "destructive" : "default",
+                      title: "✅ Bitrix OK",
+                      description: result.value?.ok ? `Portal: ${result.value.portal || 'N/A'}` : "Token inválido",
                     });
                   } catch (e: any) {
                     toast({

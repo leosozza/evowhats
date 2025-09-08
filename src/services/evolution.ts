@@ -1,20 +1,24 @@
 import type { Transport } from "@/core/transport";
 import type { Result } from "@/core/result";
 
-export type EvoInstance = {
-  id: string;
-  label?: string;
+export type EvoInstance = { 
+  id: string; 
+  label?: string; 
   state?: string;
-  owner?: string;
-  profileName?: string;
-  profilePictureUrl?: string;
-  connectedAt?: string;
-  lastActivity?: string;
+  instanceName?: string;
+  instance?: string;
 };
 
-export type EvoDiag = {
-  ok: boolean;
-  steps: Record<string, unknown>;
+export type EvoDiag = { 
+  ok: boolean; 
+  steps: Record<string, {
+    ok?: boolean;
+    instanceCount?: number;
+    status?: number;
+    reason?: string;
+    error?: string;
+  }>;
+  error?: string;
 };
 
 export type EvoQrResponse = {
