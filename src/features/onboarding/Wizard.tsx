@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { bitrixManager } from "@/services/bitrixManager";
 import { evolutionClient } from "@/services/evolutionClient";
 import ConnectBitrixButton from "@/components/bitrix/ConnectBitrixButton";
+import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
 
 type WizardStep = 1 | 2 | 3 | 4;
 
@@ -75,6 +76,30 @@ export function Wizard() {
       tested: false,
     },
   });
+
+  // Check initial Bitrix connection status
+  useEffect(() => {
+    const checkInitialBitrixStatus = async () => {
+      try {
+        const status = await getBitrixAuthStatus();
+        if (status.isConnected) {
+          setState(prev => ({
+            ...prev,
+            bitrix: {
+              ...prev.bitrix,
+              connected: status.isConnected,
+              tokenValid: status.hasValidTokens,
+              portalUrl: status.portalUrl || prev.bitrix.portalUrl,
+            },
+          }));
+        }
+      } catch (error) {
+        console.error("Failed to check initial Bitrix status:", error);
+      }
+    };
+
+    checkInitialBitrixStatus();
+  }, []);
 
   const progress = ((state.currentStep - 1) / 3) * 100;
 
@@ -414,6 +439,10 @@ export function Wizard() {
                   onPortalUrlChange={(url) => setState(prev => ({
                     ...prev,
                     bitrix: { ...prev.bitrix, portalUrl: url }
+                  }))}
+                  onConnectionChange={(connected, tokenValid) => setState(prev => ({
+                    ...prev,
+                    bitrix: { ...prev.bitrix, connected, tokenValid }
                   }))}
                 />
 

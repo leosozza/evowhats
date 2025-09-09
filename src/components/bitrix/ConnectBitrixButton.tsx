@@ -11,9 +11,10 @@ import { openBitrixPopup, getPortalFromIframe } from "@/utils/bitrixAuth";
 interface ConnectBitrixButtonProps {
   portalUrl: string;
   onPortalUrlChange: (url: string) => void;
+  onConnectionChange?: (connected: boolean, tokenValid: boolean) => void;
 }
 
-const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButtonProps) => {
+const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange, onConnectionChange }: ConnectBitrixButtonProps) => {
   const [loading, setLoading] = useState(false);
   const [authStatus, setAuthStatus] = useState<BitrixAuthStatus | null>(null);
   const [showPortalInput, setShowPortalInput] = useState(true);
@@ -23,6 +24,11 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange }: ConnectBitrixButt
     try {
       const status = await getBitrixAuthStatus();
       setAuthStatus(status);
+      
+      // Notify parent about connection changes
+      if (onConnectionChange) {
+        onConnectionChange(status.isConnected, status.hasValidTokens);
+      }
       
       // If connected, hide portal input and use existing portal URL
       if (status.isConnected && status.portalUrl && !portalUrl) {
