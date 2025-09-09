@@ -21,6 +21,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { bitrixManager } from "@/services/bitrixManager";
 import { evolutionClient } from "@/services/evolutionClient";
+import ConnectBitrixButton from "@/components/bitrix/ConnectBitrixButton";
 
 type WizardStep = 1 | 2 | 3 | 4;
 
@@ -408,18 +409,13 @@ export function Wizard() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="portal-url">URL do Portal</Label>
-                  <Input
-                    id="portal-url"
-                    placeholder="https://seuportal.bitrix24.com.br"
-                    value={state.bitrix.portalUrl}
-                    onChange={(e) => setState(prev => ({
-                      ...prev,
-                      bitrix: { ...prev.bitrix, portalUrl: e.target.value }
-                    }))}
-                  />
-                </div>
+                <ConnectBitrixButton 
+                  portalUrl={state.bitrix.portalUrl}
+                  onPortalUrlChange={(url) => setState(prev => ({
+                    ...prev,
+                    bitrix: { ...prev.bitrix, portalUrl: url }
+                  }))}
+                />
 
                 {state.bitrix.connected && (
                   <Alert>
@@ -429,16 +425,6 @@ export function Wizard() {
                     </AlertDescription>
                   </Alert>
                 )}
-
-                <Button 
-                  onClick={handleBitrixConnect} 
-                  disabled={loading || !state.bitrix.portalUrl.trim()}
-                  className="w-full"
-                >
-                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {state.bitrix.connected ? "Reconectar" : "Conectar Bitrix24"}
-                  <ExternalLink className="ml-2 h-4 w-4" />
-                </Button>
               </CardContent>
             </Card>
           </TabsContent>
