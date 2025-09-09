@@ -177,8 +177,14 @@ export function Wizard() {
       }));
 
       // 2) Obter ou criar uma linha (OpenLine)
-      const linesResult = await bitrixManager.getLines();
-      const lines = linesResult.result?.result || linesResult.result || [];
+      let lines: any[] = [];
+      try {
+        const linesResult = await bitrixManager.getLines();
+        lines = linesResult.result?.result || linesResult.result || [];
+      } catch (e) {
+        console.warn("getLines falhou, tentando criar linha padrão...", e);
+        lines = [];
+      }
 
       let lineId: string | undefined;
       if (!lines || lines.length === 0) {

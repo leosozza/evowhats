@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
 
 export interface RegisterConnectorRequest {
   connector?: string;
@@ -63,6 +63,7 @@ class BitrixManager {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+        apikey: SUPABASE_PUBLISHABLE_KEY,
       },
       body: JSON.stringify({
         connector: params.connector,
@@ -83,6 +84,7 @@ class BitrixManager {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+        apikey: SUPABASE_PUBLISHABLE_KEY,
       },
       body: JSON.stringify({
         connector: params.connector,
@@ -114,6 +116,7 @@ class BitrixManager {
       method: "GET",
       headers: {
         Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+        apikey: SUPABASE_PUBLISHABLE_KEY,
       },
     });
     if (!response.ok) {
@@ -141,6 +144,7 @@ class BitrixManager {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+          apikey: SUPABASE_PUBLISHABLE_KEY,
         },
         body: JSON.stringify(params),
       }
@@ -167,7 +171,7 @@ class BitrixManager {
   }
 
   private async getFunctionBaseUrl(): Promise<string> {
-    return "https://twqcybbjyhcokcrdfgkk.functions.supabase.co";
+    return `${SUPABASE_URL}/functions/v1`;
   }
 }
 
