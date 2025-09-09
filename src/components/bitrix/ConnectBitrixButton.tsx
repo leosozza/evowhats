@@ -220,17 +220,12 @@ const ConnectBitrixButton = ({ portalUrl, onPortalUrlChange, onConnectionChange 
           </div>
           <Button 
             onClick={handleConnectOAuth} 
-            disabled={loading || !portalUrl.trim()}
+            disabled={loading}
             className="gradient-primary"
           >
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link className="h-4 w-4 mr-2" />}
             {loading ? "Conectando..." : "Conectar via OAuth"}
           </Button>
-          {!portalUrl.trim() && (
-            <p className="text-xs text-muted-foreground text-red-600">
-              Digite a URL do portal para conectar
-            </p>
-          )}
         </div>
       )}
 

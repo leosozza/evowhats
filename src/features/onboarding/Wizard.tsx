@@ -164,19 +164,41 @@ export function Wizard() {
   const handleConnectorSetup = async () => {
     setLoading(true);
     try {
-      // Register connector
+      // 1) Registrar conector
       await bitrixManager.registerConnector({
         connector: "evolution_whatsapp",
         name: "EvoWhats",
         chatGroup: "N",
       });
-      
+
       setState(prev => ({
         ...prev,
         connector: { ...prev.connector, registered: true },
       }));
 
-      // Publish connector data
+      // 2) Obter ou criar uma linha (OpenLine)
+      const linesResult = await bitrixManager.getLines();
+      const lines = linesResult.result?.result || linesResult.result || [];
+
+      let lineId: string | undefined;
+      if (!lines || lines.length === 0) {
+        const created = await bitrixManager.createLine({ name: "WhatsApp - Atendimento" });
+        lineId = String(
+          created.result?.result?.ID || created.result?.ID || created.result?.id || created.ID || created.id || ""
+        );
+      } else {
+        const first = lines[0];
+        lineId = String(first.ID || first.id || first.line_id || first.LINE_ID || "");
+      }
+
+      if (!lineId) throw new Error("Não foi possível obter/criar a linha do Bitrix");
+
+      setState(prev => ({
+        ...prev,
+        connector: { ...prev.connector, lineId },
+      }));
+
+      // 3) Publicar dados do conector (metadados)
       await bitrixManager.publishConnectorData({
         connector: "evolution_whatsapp",
         data: {
@@ -191,28 +213,13 @@ export function Wizard() {
         connector: { ...prev.connector, published: true },
       }));
 
-      // Get available lines
-      const linesResult = await bitrixManager.getLines();
-      const lines = linesResult.result || [];
-      
-      if (lines.length === 0) {
-        // Create a default line
-        const newLine = await bitrixManager.createLine({ name: "WhatsApp - Atendimento" });
-        const lineId = newLine.result?.ID || newLine.result?.id;
-        if (lineId) {
-          setState(prev => ({
-            ...prev,
-            connector: { ...prev.connector, lineId: String(lineId) },
-          }));
-        }
-      } else {
-        setState(prev => ({
-          ...prev,
-          connector: { ...prev.connector, lineId: String(lines[0].ID) },
-        }));
-      }
+      // 4) Ativar conector na linha
+      await bitrixManager.activateConnector({
+        connector: "evolution_whatsapp",
+        line: lineId,
+        active: true,
+      });
 
-      // Activate connector (will use the line ID when available)
       setState(prev => ({
         ...prev,
         connector: { ...prev.connector, activated: true },
@@ -220,7 +227,7 @@ export function Wizard() {
 
       toast({
         title: "Conector configurado!",
-        description: "Conector registrado e ativado no Bitrix24",
+        description: "Conector registrado, publicado e ativado no Bitrix24",
       });
     } catch (error) {
       console.error("Connector setup error:", error);

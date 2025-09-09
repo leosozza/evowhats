@@ -57,25 +57,44 @@ class BitrixManager {
   }
 
   async publishConnectorData(params: PublishConnectorDataRequest) {
-    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
-      body: {
-        action: "publish_connector_data",
-        ...params,
+    const base = await this.getFunctionBaseUrl();
+    const response = await fetch(`${base}/bitrix-openlines-manager/data-set`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
       },
+      body: JSON.stringify({
+        connector: params.connector,
+        data: params.data,
+      }),
     });
-    if (error) throw new Error(error.message || "Falha ao publicar dados do conector");
-    return data;
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error?.error || "Falha ao publicar dados do conector");
+    }
+    return response.json();
   }
 
   async activateConnector(params: ActivateConnectorRequest) {
-    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
-      body: {
-        action: "activate_connector",
-        ...params,
+    const base = await this.getFunctionBaseUrl();
+    const response = await fetch(`${base}/bitrix-openlines-manager/activate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
       },
+      body: JSON.stringify({
+        connector: params.connector,
+        line: params.line,
+        active: params.active ?? true,
+      }),
     });
-    if (error) throw new Error(error.message || "Falha ao ativar conector");
-    return data;
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error?.error || "Falha ao ativar conector");
+    }
+    return response.json();
   }
 
   async getStatus(connector = "evolution_whatsapp") {
@@ -90,20 +109,16 @@ class BitrixManager {
   }
 
   async getLines() {
-    const response = await fetch(
-      `${(await supabase.functions.invoke("bitrix-openlines-manager", { body: {} })).data}/lines`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-        },
-      }
-    );
-    
+    const base = await this.getFunctionBaseUrl();
+    const response = await fetch(`${base}/bitrix-openlines-manager/lines`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+      },
+    });
     if (!response.ok) {
       throw new Error("Falha ao obter linhas");
     }
-    
     return response.json();
   }
 
