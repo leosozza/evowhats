@@ -113,27 +113,37 @@ class BitrixManager {
   async getLines() {
     const base = await this.getFunctionBaseUrl();
     const response = await fetch(`${base}/bitrix-openlines-manager/lines`, {
-      method: "GET",
+      method: "POST",
       headers: {
+        "Content-Type": "application/json",
         Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
         apikey: SUPABASE_PUBLISHABLE_KEY,
       },
+      body: JSON.stringify({}),
     });
     if (!response.ok) {
-      throw new Error("Falha ao obter linhas");
+      const text = await response.text().catch(() => "");
+      throw new Error(`Falha ao obter linhas (${response.status}): ${text || response.statusText}`);
     }
     return response.json();
   }
 
   async createLine(params: CreateLineRequest) {
-    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
-      body: {
-        action: "create_line",
-        ...params,
+    const base = await this.getFunctionBaseUrl();
+    const response = await fetch(`${base}/bitrix-openlines-manager/lines/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+        apikey: SUPABASE_PUBLISHABLE_KEY,
       },
+      body: JSON.stringify(params),
     });
-    if (error) throw new Error(error.message || "Falha ao criar linha");
-    return data;
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Falha ao criar linha (${response.status}): ${text || response.statusText}`);
+    }
+    return response.json();
   }
 
   async bindLine(params: BindLineRequest) {
