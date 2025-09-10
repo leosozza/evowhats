@@ -180,6 +180,11 @@ serve(async (req) => {
           });
           return json({ result }, 200, origin);
         }
+        case "list_lines":
+        case "get_lines": {
+          const result = await callBitrixAPI(userId, "imopenlines.config.list.get", {});
+          return json({ result }, 200, origin);
+        }
         case "create_line": {
           const result = await callBitrixAPI(userId, "imopenlines.config.add", {
             FIELDS: {

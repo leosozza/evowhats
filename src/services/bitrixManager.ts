@@ -111,19 +111,11 @@ class BitrixManager {
   }
 
   async getLines() {
-    const base = await this.getFunctionBaseUrl();
-    const response = await fetch(`${base}/bitrix-openlines-manager/lines`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-      },
+    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+      body: { action: "list_lines" },
     });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`Falha ao obter linhas (${response.status}): ${text || response.statusText}`);
-    }
-    return response.json();
+    if (error) throw new Error(error.message || "Falha ao obter linhas");
+    return data;
   }
 
   async createLine(params: CreateLineRequest) {
