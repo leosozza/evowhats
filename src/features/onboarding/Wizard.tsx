@@ -187,17 +187,36 @@ export function Wizard() {
       }
 
       let lineId: string | undefined;
+      let created: any = null;
+      
       if (!lines || lines.length === 0) {
-        const created = await bitrixManager.createLine({ name: "WhatsApp - Atendimento" });
+        created = await bitrixManager.createLine({ name: "WhatsApp - Atendimento" });
+        console.log("Resposta createLine:", JSON.stringify(created, null, 2));
+        
+        // Extrair lineId da resposta (pode estar em várias estruturas)
         lineId = String(
-          created.result?.result?.ID || created.result?.ID || created.result?.id || created.ID || created.id || ""
+          created.result?.result?.result ||  // Bitrix retorna { result: { result: ID }}
+          created.result?.result?.ID || 
+          created.result?.result || // Às vezes é só o número
+          created.result?.ID || 
+          created.result?.id || 
+          created.ID || 
+          created.id || 
+          created.result || // Fallback: se result é o próprio ID
+          ""
         );
+        
+        console.log("LineId extraído:", lineId);
       } else {
         const first = lines[0];
         lineId = String(first.ID || first.id || first.line_id || first.LINE_ID || "");
+        console.log("LineId da lista existente:", lineId);
       }
 
-      if (!lineId) throw new Error("Não foi possível obter/criar a linha do Bitrix");
+      if (!lineId) {
+        console.error("LineId vazio! Resultado completo:", created);
+        throw new Error("Não foi possível obter/criar a linha do Bitrix");
+      }
 
       setState(prev => ({
         ...prev,
