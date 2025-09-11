@@ -57,46 +57,28 @@ class BitrixManager {
   }
 
   async publishConnectorData(params: PublishConnectorDataRequest) {
-    const base = await this.getFunctionBaseUrl();
-    const response = await fetch(`${base}/bitrix-openlines-manager/data-set`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-      },
-      body: JSON.stringify({
+    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+      body: {
+        action: "publish_connector_data",
         connector: params.connector,
         data: params.data,
-      }),
+      },
     });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error?.error || "Falha ao publicar dados do conector");
-    }
-    return response.json();
+    if (error) throw new Error(error.message || "Falha ao publicar dados do conector");
+    return data;
   }
 
   async activateConnector(params: ActivateConnectorRequest) {
-    const base = await this.getFunctionBaseUrl();
-    const response = await fetch(`${base}/bitrix-openlines-manager/activate`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-      },
-      body: JSON.stringify({
+    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+      body: {
+        action: "activate_connector",
         connector: params.connector,
         line: params.line,
         active: params.active ?? true,
-      }),
+      },
     });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error?.error || "Falha ao ativar conector");
-    }
-    return response.json();
+    if (error) throw new Error(error.message || "Falha ao ativar conector");
+    return data;
   }
 
   async getStatus(connector = "evolution_whatsapp") {
