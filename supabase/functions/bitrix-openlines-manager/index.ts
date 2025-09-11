@@ -98,7 +98,7 @@ serve(async (req) => {
       if (body.placement_handler) params.PLACEMENT_HANDLER = body.placement_handler;
 
       const result = await callBitrixAPI(userId, "imconnector.register", params);
-      return json({ ok: true, result }, 200, origin);
+      return json({ success: true, result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/data-set")) {
@@ -109,28 +109,44 @@ serve(async (req) => {
         CONNECTOR: connector,
         DATA: data,
       });
-      return json({ ok: true, result }, 200, origin);
+      return json({ success: true, result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/activate")) {
       const body = await readBody();
       const connector = body.connector || CONNECTOR_ID;
       const line = body.line || body.LINE;
+      if (!line) return json({ success: false, error: "Missing line parameter" }, 400, origin);
+      
       const active = body.active ?? true;
       const method = active ? "imconnector.activate" : "imconnector.deactivate";
       const result = await callBitrixAPI(userId, method, { CONNECTOR: connector, LINE: line });
-      return json({ ok: true, result }, 200, origin);
+      return json({ success: true, result }, 200, origin);
     }
 
     if (req.method === "GET" && path.endsWith("/bitrix-openlines-manager/status")) {
       const connector = url.searchParams.get("connector") || CONNECTOR_ID;
-      const result = await callBitrixAPI(userId, "imconnector.status", { CONNECTOR: connector });
-      return json({ ok: true, result }, 200, origin);
+      
+      // Get connector status and lines to build aggregated response
+      const [statusResult, linesResult] = await Promise.all([
+        callBitrixAPI(userId, "imconnector.status", { CONNECTOR: connector }),
+        callBitrixAPI(userId, "imopenlines.config.list.get", {}).catch(() => ({ result: [] }))
+      ]);
+      
+      const status = {
+        registered: !!statusResult?.result?.registered,
+        published: !!statusResult?.result?.data_set,
+        tilePlaced: false, // Would need placement.list to check this
+        lines: linesResult?.result || [],
+        activeConnections: statusResult?.result?.active_lines || []
+      };
+      
+      return json({ success: true, result: status, status, raw: statusResult }, 200, origin);
     }
 
     if (req.method === "GET" && path.endsWith("/bitrix-openlines-manager/lines")) {
       const result = await callBitrixAPI(userId, "imopenlines.config.list.get", {});
-      return json({ ok: true, result }, 200, origin);
+      return json({ success: true, result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/lines/create")) {
@@ -143,18 +159,18 @@ serve(async (req) => {
         QUEUE_TYPE: "strictly_order",
       };
       const result = await callBitrixAPI(userId, "imopenlines.config.add", { FIELDS: fields });
-      return json({ ok: true, result }, 200, origin);
+      return json({ success: true, result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/bind-line")) {
       const body = await readBody();
       const lineId = String(body.line_id || body.lineId || body.LINE || "").trim();
       const waInstanceId = String(body.wa_instance_id || body.instance_id || body.waInstanceId || "").trim();
-      if (!lineId || !waInstanceId) return json({ error: "Missing line_id or wa_instance_id" }, 400, origin);
+      if (!lineId || !waInstanceId) return json({ success: false, error: "Missing line_id or wa_instance_id" }, 400, origin);
 
       const { error } = await upsertBinding(service, userId, lineId, waInstanceId, userId);
-      if (error) return json({ error: error.message }, 500, origin);
-      return json({ ok: true }, 200, origin);
+      if (error) return json({ success: false, error: error.message }, 500, origin);
+      return json({ success: true }, 200, origin);
     }
 
     // Backward compatibility (action-based)
@@ -163,31 +179,58 @@ serve(async (req) => {
       const action = String(body.action || "");
       switch (action) {
         case "get_status": {
-          const result = await callBitrixAPI(userId, "imconnector.status", { CONNECTOR: CONNECTOR_ID });
-          return json({ result }, 200, origin);
+          // Get connector status and lines to build aggregated response
+          const connector = body.connector || CONNECTOR_ID;
+          const [statusResult, linesResult] = await Promise.all([
+            callBitrixAPI(userId, "imconnector.status", { CONNECTOR: connector }),
+            callBitrixAPI(userId, "imopenlines.config.list.get", {}).catch(() => ({ result: [] }))
+          ]);
+          
+          const status = {
+            registered: !!statusResult?.result?.registered,
+            published: !!statusResult?.result?.data_set,
+            tilePlaced: false, // Would need placement.list to check this
+            lines: linesResult?.result || [],
+            activeConnections: statusResult?.result?.active_lines || []
+          };
+          
+          return json({ success: true, result: status, status, raw: statusResult }, 200, origin);
         }
         case "register_connector": {
           const result = await callBitrixAPI(userId, "imconnector.register", {
             ID: body.connector || CONNECTOR_ID,
             NAME: body.name || "EvoWhats",
+            CHAT_GROUP: body.chatGroup ?? "N",
           });
-          return json({ result }, 200, origin);
+          return json({ success: true, result }, 200, origin);
         }
         case "publish_connector_data": {
           if (!body.line) {
-            return json({ error: "LINE parameter is required for publish_connector_data" }, 400, origin);
+            return json({ success: false, error: "LINE parameter is required for publish_connector_data" }, 400, origin);
           }
           const result = await callBitrixAPI(userId, "imconnector.connector.data.set", {
             CONNECTOR: body.connector || CONNECTOR_ID,
             LINE: body.line,
             DATA: body.data || {},
           });
-          return json({ result }, 200, origin);
+          return json({ success: true, result }, 200, origin);
+        }
+        case "add_to_contact_center": {
+          if (!body.placement || !body.handlerUrl) {
+            return json({ success: false, error: "Missing placement or handlerUrl parameters" }, 400, origin);
+          }
+          const result = await callBitrixAPI(userId, "placement.bind", {
+            PLACEMENT: body.placement,
+            HANDLER: body.handlerUrl,
+            TITLE: body.title || "EvoWhats",
+            DESCRIPTION: body.description || "WhatsApp Integration",
+          });
+          return json({ success: true, result }, 200, origin);
         }
         case "list_lines":
         case "get_lines": {
           const result = await callBitrixAPI(userId, "imopenlines.config.list.get", {});
-          return json({ result }, 200, origin);
+          return json({ success: true, result }, 200, origin);
         }
         case "create_line": {
           const result = await callBitrixAPI(userId, "imopenlines.config.add", {
@@ -198,24 +241,27 @@ serve(async (req) => {
               QUEUE_TYPE: "strictly_order",
             },
           });
-          return json({ result }, 200, origin);
+          return json({ success: true, result }, 200, origin);
         }
         case "activate_connector": {
+          if (!body.line) {
+            return json({ success: false, error: "Missing line parameter" }, 400, origin);
+          }
           const method = body.active ? "imconnector.activate" : "imconnector.deactivate";
           const result = await callBitrixAPI(userId, method, {
             CONNECTOR: body.connector || CONNECTOR_ID,
             LINE: body.line,
           });
-          return json({ result }, 200, origin);
+          return json({ success: true, result }, 200, origin);
         }
         default:
-          return json({ error: "Invalid action" }, 400, origin);
+          return json({ success: false, error: "Invalid action" }, 400, origin);
       }
     }
 
-    return json({ error: "Not Found" }, 404, origin);
+    return json({ success: false, error: "Not Found" }, 404, origin);
   } catch (e) {
     console.error("[bitrix-openlines-manager] Error:", e);
-    return json({ error: String(e) }, 500, origin);
+    return json({ success: false, error: String(e) }, 500, origin);
   }
 });
