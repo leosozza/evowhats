@@ -10,6 +10,7 @@ export interface RegisterConnectorRequest {
 
 export interface PublishConnectorDataRequest {
   connector?: string;
+  line: string;
   data: Record<string, any>;
 }
 
@@ -61,6 +62,7 @@ class BitrixManager {
       body: {
         action: "publish_connector_data",
         connector: params.connector,
+        line: params.line,
         data: params.data,
       },
     });

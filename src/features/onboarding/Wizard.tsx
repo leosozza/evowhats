@@ -226,6 +226,7 @@ export function Wizard() {
       // 3) Publicar dados do conector (metadados)
       await bitrixManager.publishConnectorData({
         connector: "evolution_whatsapp",
+        line: lineId,
         data: {
           TITLE: "EvoWhats",
           DESCRIPTION: "Integração WhatsApp via Evolution API",

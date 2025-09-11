@@ -174,8 +174,12 @@ serve(async (req) => {
           return json({ result }, 200, origin);
         }
         case "publish_connector_data": {
+          if (!body.line) {
+            return json({ error: "LINE parameter is required for publish_connector_data" }, 400, origin);
+          }
           const result = await callBitrixAPI(userId, "imconnector.connector.data.set", {
             CONNECTOR: body.connector || CONNECTOR_ID,
+            LINE: body.line,
             DATA: body.data || {},
           });
           return json({ result }, 200, origin);
