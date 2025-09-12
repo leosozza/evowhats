@@ -248,7 +248,7 @@ serve(async (req) => {
     } catch (e: any) { return ko(String(e?.message || e)); }
   }
 
-  // 5) Iniciar sessão (cria/conecta e tenta QR)
+  // 5) Iniciar sessão (usar SOMENTE instância existente; NÃO criar)
   if (action === "start_session_for_line") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
@@ -257,10 +257,26 @@ serve(async (req) => {
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
 
-      // Create instance
-      await evoFetch(cfg, "/instance/create", "POST", { instanceName, qrcode: true }).catch(() => {});
-      
-      // Try different connect patterns
+      // 1) Verificar se a instância já existe
+      let li = await evoFetch(cfg, "/instance/list", "GET");
+      if (!li.ok && li.status === 404) {
+        li = await evoFetch(cfg, "/instance/fetchInstances", "GET");
+      }
+      if (!li.ok && li.status === 404) {
+        li = await evoFetch(cfg, "/sessions", "GET");
+      }
+      const instances = li?.data?.instances || li?.data || [];
+      const exists = Array.isArray(instances) && instances.some((x: any) =>
+        x?.instanceName === instanceName || x?.name === instanceName || x?.id === instanceName
+      );
+      if (!exists) {
+        return ko("instance_not_found", {
+          message: "Instância Evolution inexistente para esta linha. Crie/associe no Evolution e tente novamente.",
+          instanceName,
+        });
+      }
+
+      // 2) Conectar (sem criar)
       let connectUrl = `/instance/connect/${encodeURIComponent(instanceName)}`;
       if (number) connectUrl += `?number=${encodeURIComponent(number)}`;
       

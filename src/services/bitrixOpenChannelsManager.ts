@@ -1,7 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
 
-const FUNCTIONS_BASE = "https://twqcybbjyhcokcrdfgkk.functions.supabase.co";
-
 export interface ConnectorStatus {
   registered: boolean;
   published: boolean;
@@ -11,49 +9,19 @@ export interface ConnectorStatus {
 }
 
 export async function getOpenChannelsStatus(): Promise<ConnectorStatus> {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines-manager`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ action: "get_status" }),
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+    body: { action: "get_status" },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao verificar status");
-  }
-
-  const data = await resp.json();
-  return data.result;
+  if (error) throw new Error(error.message || "Falha ao verificar status");
+  return data?.status || data?.result;
 }
 
 export async function listOpenChannelsLines() {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ action: "list_lines" }),
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines", {
+    body: { action: "list_lines" },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao listar linhas");
-  }
-
-  const data = await resp.json();
-  return data.lines || [];
+  if (error) throw new Error(error.message || "Falha ao listar linhas");
+  return data?.lines || data?.result || [];
 }
 
 export async function registerConnector(params: {
@@ -62,105 +30,53 @@ export async function registerConnector(params: {
   icon: string;
   chatGroup?: string;
 }) {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines-manager`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+    body: {
       action: "register_connector",
       ...params,
-    }),
+    },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao registrar conector");
-  }
-  return resp.json();
+  if (error) throw new Error(error.message || "Falha ao registrar conector");
+  return data;
 }
 
 export async function publishConnectorData(params: {
   connector: string;
   data: any;
 }) {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines-manager`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+    body: {
       action: "publish_connector_data",
       ...params,
-    }),
+    },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao publicar dados do conector");
-  }
-  return resp.json();
+  if (error) throw new Error(error.message || "Falha ao publicar dados do conector");
+  return data;
 }
 
 export async function addToContactCenter(params: {
   placement: string;
   handlerUrl: string;
 }) {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines-manager`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+    body: {
       action: "add_to_contact_center",
       ...params,
-    }),
+    },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao adicionar ao Contact Center");
-  }
-  return resp.json();
+  if (error) throw new Error(error.message || "Falha ao adicionar ao Contact Center");
+  return data;
 }
 
 export async function createLine(name: string) {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines-manager`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+    body: {
       action: "create_line",
       name,
-    }),
+    },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao criar linha");
-  }
-  return resp.json();
+  if (error) throw new Error(error.message || "Falha ao criar linha");
+  return data;
 }
 
 export async function activateConnector(params: {
@@ -168,25 +84,12 @@ export async function activateConnector(params: {
   line: string;
   active: boolean;
 }) {
-  const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token;
-  if (!accessToken) throw new Error("Você precisa estar autenticado.");
-
-  const resp = await fetch(`${FUNCTIONS_BASE}/bitrix-openlines-manager`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+    body: {
       action: "activate_connector",
       ...params,
-    }),
+    },
   });
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || "Falha ao ativar conector");
-  }
-  return resp.json();
+  if (error) throw new Error(error.message || "Falha ao ativar conector");
+  return data;
 }

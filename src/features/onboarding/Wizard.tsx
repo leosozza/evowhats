@@ -176,46 +176,23 @@ export function Wizard() {
         connector: { ...prev.connector, registered: true },
       }));
 
-      // 2) Obter ou criar uma linha (OpenLine)
-      let lines: any[] = [];
-      try {
-        const linesResult = await bitrixManager.getLines();
-        lines = linesResult.result?.result || linesResult.result || [];
-      } catch (e) {
-        console.warn("getLines falhou, tentando criar linha padrão...", e);
-        lines = [];
+      // 2) Obter linhas existentes (NÃO criar linha)
+      const linesResult = await bitrixManager.getLines();
+      const lines: any[] = linesResult.result?.result || linesResult.result || linesResult.lines || [];
+      if (!Array.isArray(lines) || lines.length === 0) {
+        toast({
+          title: "Nenhuma linha encontrada no Bitrix",
+          description: "Crie a linha em 'Contact Center → Open Lines' no Bitrix24 e retorne para continuar.",
+          variant: "destructive",
+        });
+        return;
       }
-
-      let lineId: string | undefined;
-      let created: any = null;
       
-      if (!lines || lines.length === 0) {
-        created = await bitrixManager.createLine({ name: "WhatsApp - Atendimento" });
-        console.log("Resposta createLine:", JSON.stringify(created, null, 2));
-        
-        // Extrair lineId da resposta (pode estar em várias estruturas)
-        lineId = String(
-          created.result?.result?.result ||  // Bitrix retorna { result: { result: ID }}
-          created.result?.result?.ID || 
-          created.result?.result || // Às vezes é só o número
-          created.result?.ID || 
-          created.result?.id || 
-          created.ID || 
-          created.id || 
-          created.result || // Fallback: se result é o próprio ID
-          ""
-        );
-        
-        console.log("LineId extraído:", lineId);
-      } else {
-        const first = lines[0];
-        lineId = String(first.ID || first.id || first.line_id || first.LINE_ID || "");
-        console.log("LineId da lista existente:", lineId);
-      }
-
+      // Usar a primeira linha disponível
+      const first = lines[0];
+      const lineId = String(first.ID || first.id || first.line_id || first.LINE_ID || "");
       if (!lineId) {
-        console.error("LineId vazio! Resultado completo:", created);
-        throw new Error("Não foi possível obter/criar a linha do Bitrix");
+        throw new Error("Não foi possível identificar o ID da linha existente.");
       }
 
       setState(prev => ({
