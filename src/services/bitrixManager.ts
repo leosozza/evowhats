@@ -1,4 +1,4 @@
-import { supabase, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface RegisterConnectorRequest {
   connector?: string;
@@ -114,25 +114,14 @@ class BitrixManager {
   }
 
   async bindLine(params: BindLineRequest) {
-    const response = await fetch(
-      `${await this.getFunctionBaseUrl()}/bitrix-openlines-manager/bind-line`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-          apikey: SUPABASE_PUBLISHABLE_KEY,
-        },
-        body: JSON.stringify(params),
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(error.error || "Falha ao vincular linha");
-    }
-
-    return response.json();
+    const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
+      body: {
+        action: "bind_line",
+        ...params,
+      },
+    });
+    if (error) throw new Error(error.message || "Falha ao vincular linha");
+    return data;
   }
 
   async syncLeads() {
@@ -147,9 +136,6 @@ class BitrixManager {
     return user.id;
   }
 
-  private async getFunctionBaseUrl(): Promise<string> {
-    return `${SUPABASE_URL}/functions/v1`;
-  }
 }
 
 export const bitrixManager = new BitrixManager();
