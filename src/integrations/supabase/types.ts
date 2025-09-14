@@ -229,37 +229,79 @@ export type Database = {
         }
         Relationships: []
       }
+      contacts: {
+        Row: {
+          created_at: string | null
+          display_name: string | null
+          id: string
+          phone_e164: string
+          tenant_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          display_name?: string | null
+          id?: string
+          phone_e164: string
+          tenant_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          display_name?: string | null
+          id?: string
+          phone_e164?: string
+          tenant_id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           bitrix_chat_id: string | null
+          contact_id: string | null
           contact_name: string | null
           contact_phone: string
           created_at: string
           evolution_instance: string | null
           id: string
+          instance_id: string | null
           last_message_at: string | null
+          openlines_chat_id: string | null
+          status: string | null
+          tenant_id: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           bitrix_chat_id?: string | null
+          contact_id?: string | null
           contact_name?: string | null
           contact_phone: string
           created_at?: string
           evolution_instance?: string | null
           id?: string
+          instance_id?: string | null
           last_message_at?: string | null
+          openlines_chat_id?: string | null
+          status?: string | null
+          tenant_id?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           bitrix_chat_id?: string | null
+          contact_id?: string | null
           contact_name?: string | null
           contact_phone?: string
           created_at?: string
           evolution_instance?: string | null
           id?: string
+          instance_id?: string | null
           last_message_at?: string | null
+          openlines_chat_id?: string | null
+          status?: string | null
+          tenant_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -307,6 +349,7 @@ export type Database = {
           content: string
           conversation_id: string
           created_at: string
+          delivery_status: string | null
           direction: string
           evolution_message_id: string | null
           id: string
@@ -322,6 +365,7 @@ export type Database = {
           content: string
           conversation_id: string
           created_at?: string
+          delivery_status?: string | null
           direction: string
           evolution_message_id?: string | null
           id?: string
@@ -337,6 +381,7 @@ export type Database = {
           content?: string
           conversation_id?: string
           created_at?: string
+          delivery_status?: string | null
           direction?: string
           evolution_message_id?: string | null
           id?: string
@@ -381,6 +426,36 @@ export type Database = {
           portal_url?: string
           state?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      open_channel_bindings: {
+        Row: {
+          created_at: string | null
+          id: string
+          instance_id: string | null
+          line_id: string
+          tenant_id: string
+          updated_at: string | null
+          wa_instance_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          instance_id?: string | null
+          line_id: string
+          tenant_id: string
+          updated_at?: string | null
+          wa_instance_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          instance_id?: string | null
+          line_id?: string
+          tenant_id?: string
+          updated_at?: string | null
+          wa_instance_id?: string | null
         }
         Relationships: []
       }
@@ -486,6 +561,36 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_instances: {
+        Row: {
+          created_at: string | null
+          id: string
+          label: string
+          secret: string | null
+          tenant_id: string
+          updated_at: string | null
+          webhook_secret: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          label: string
+          secret?: string | null
+          tenant_id: string
+          updated_at?: string | null
+          webhook_secret?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          label?: string
+          secret?: string | null
+          tenant_id?: string
+          updated_at?: string | null
+          webhook_secret?: string | null
+        }
+        Relationships: []
+      }
       wa_sessions: {
         Row: {
           bitrix_line_id: string
@@ -493,6 +598,7 @@ export type Database = {
           created_at: string
           evo_instance_id: string
           id: string
+          instance_id: string | null
           last_sync_at: string | null
           qr_code: string | null
           status: string
@@ -505,6 +611,7 @@ export type Database = {
           created_at?: string
           evo_instance_id: string
           id?: string
+          instance_id?: string | null
           last_sync_at?: string | null
           qr_code?: string | null
           status?: string
@@ -517,11 +624,36 @@ export type Database = {
           created_at?: string
           evo_instance_id?: string
           id?: string
+          instance_id?: string | null
           last_sync_at?: string | null
           qr_code?: string | null
           status?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      webhook_logs: {
+        Row: {
+          id: string
+          payload_json: Json
+          provider: string | null
+          received_at: string | null
+          valid_signature: boolean | null
+        }
+        Insert: {
+          id?: string
+          payload_json: Json
+          provider?: string | null
+          received_at?: string | null
+          valid_signature?: boolean | null
+        }
+        Update: {
+          id?: string
+          payload_json?: Json
+          provider?: string | null
+          received_at?: string | null
+          valid_signature?: boolean | null
         }
         Relationships: []
       }
