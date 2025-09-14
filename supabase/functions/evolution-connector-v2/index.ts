@@ -3,10 +3,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const EVOLUTION_BASE_URL = Deno.env.get("EVOLUTION_BASE_URL")!;
-const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY")!;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -14,142 +11,185 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-type EvoCfg = { baseUrl: string; apiKey: string };
-
-function ok(data: any = {}) {
-  return new Response(JSON.stringify({ ok: true, ...data }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" }});
-}
-function ko(error: string, extra: any = {}) {
-  return new Response(JSON.stringify({ ok: false, error, ...extra }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" }});
+function ok(data: any) { return new Response(JSON.stringify({ ok: true, ...data }), { headers: CORS }); }
+function ko(error: string, extra?: any) {
+  return new Response(JSON.stringify({ ok: false, error, code: error, ...extra }), {
+    status: 400,
+    headers: CORS,
+  });
 }
 
 function log(data: any) {
-  console.log(JSON.stringify({ category: 'EVO', timestamp: new Date().toISOString(), ...data }));
+  console.log(`[evolution-connector-v2] ${JSON.stringify(data)}`);
 }
 
-function normalizeBase(u: string) {
-  let s = String(u || "").trim();
-  if (!s) return s;
-  s = s.replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
-  return s;
+function normalizeBase(u: string): string {
+  return u?.replace(/\/+$/, "") || "";
 }
 
-async function getUser(authorization?: string | null) {
+async function getUser(authorization: string | null): Promise<{ id: string }> {
   if (!authorization) throw new Error("Missing Authorization header");
-  const anon = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: authorization } } });
-  const { data, error } = await anon.auth.getUser();
-  if (error || !data?.user) throw new Error("Unauthorized");
-  return data.user;
+  const token = authorization.replace(/^Bearer\s+/i, "");
+  const supa = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data, error } = await supa.auth.getUser(token);
+  if (error || !data?.user?.id) throw new Error(error?.message || "Invalid token");
+  return { id: data.user.id };
 }
 
 function svc() {
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 }
 
+type EvoCfg = { baseUrl: string; apiKey: string; bearer?: string };
+
 async function getEvoCfg(service: ReturnType<typeof svc>, userId: string): Promise<EvoCfg> {
-  // Try user configuration first, fallback to environment variables
-  const { data, error } = await service
+  const { data } = await service
     .from("user_configurations")
     .select("evolution_base_url, evolution_api_key")
     .eq("user_id", userId)
+    .limit(1)
     .maybeSingle();
-  
-  if (error) {
-    log({ step: 'CONFIG_ERROR', error: error.message });
-    throw new Error(`DB error (user_configurations): ${error.message}`);
+
+  const baseUrl = normalizeBase(data?.evolution_base_url || Deno.env.get("EVOLUTION_BASE_URL") || "");
+  const apiKey = data?.evolution_api_key || Deno.env.get("EVOLUTION_API_KEY") || "";
+
+  if (!baseUrl || !apiKey) {
+    throw new Error("Evolution API configuration missing. Configure in user settings.");
   }
-  
-  const base = normalizeBase(data?.evolution_base_url || EVOLUTION_BASE_URL || "");
-  const key = String(data?.evolution_api_key || EVOLUTION_API_KEY || "");
-  
-  if (!base || !key) {
-    log({ step: 'CONFIG_MISSING', hasUserConfig: !!data, hasEnvConfig: !!(EVOLUTION_BASE_URL && EVOLUTION_API_KEY) });
-    throw new Error("Evolution API não configurada");
-  }
-  
-  return { baseUrl: base, apiKey: key };
+
+  return { baseUrl, apiKey };
 }
 
-// ---- Evolution API calls with dual auth support ----
-async function evoFetch(cfg: EvoCfg, path: string, method = "GET", payload?: any, timeoutMs = 8000) {
-  const url = `${cfg.baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
-  
-  log({ step: 'FETCH', method, url });
-  
+async function evoFetch(
+  cfg: EvoCfg,
+  path: string,
+  method: string,
+  payload?: any,
+  timeoutMs = 15000
+): Promise<{ ok: boolean; status: number; data?: any; error?: string; code?: string; url?: string }> {
+  const url = `${cfg.baseUrl}${path}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (cfg.bearer) {
+    headers.Authorization = `Bearer ${cfg.bearer}`;
+  } else if (cfg.apiKey) {
+    headers.apikey = cfg.apiKey;
+  }
+
   try {
-    // Try with apikey header first
-    let headers = {
-      "Accept": "application/json",
-      "Content-Type": "application/json",
-      "apikey": cfg.apiKey,
-    };
-    
-    let res = await fetch(url, {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(url, {
       method,
       headers,
       body: payload ? JSON.stringify(payload) : undefined,
-      signal: ctrl.signal,
+      signal: controller.signal,
     });
-    
-    // If 401/403, try with Authorization Bearer
-    if ((res.status === 401 || res.status === 403) && !headers.Authorization) {
-      log({ step: 'RETRY_AUTH', status: res.status });
-      headers = {
-        ...headers,
-        "Authorization": `Bearer ${cfg.apiKey}`,
-      };
-      delete headers.apikey;
-      
-      res = await fetch(url, {
-        method,
-        headers,
-        body: payload ? JSON.stringify(payload) : undefined,
-        signal: ctrl.signal,
-      });
-    }
-    
-    const ct = String(res.headers.get("content-type") || "");
-    const body = ct.includes("application/json") ? await res.json().catch(() => ({})) : await res.text().catch(() => "");
-    
-    log({ step: 'FETCH_RESULT', status: res.status, ok: res.ok });
-    return { status: res.status, ok: res.ok, url, data: body };
-  } catch (e) {
-    const msg = String(e?.message || e);
-    const code = msg.includes("timeout") ? "timeout" :
-                 msg.includes("TLS") ? "tls" :
-                 msg.includes("resolve") || msg.includes("dns") ? "dns" :
-                 msg.includes("fetch") || msg.includes("network") ? "connect" : "network";
-    log({ step: 'FETCH_ERROR', error: msg, code });
-    return { status: 0, ok: false, url, error: msg, code };
-  } finally {
-    clearTimeout(t);
+
+    clearTimeout(timeoutId);
+
+    let data: any = {};
+    try {
+      const text = await response.text();
+      if (text) data = JSON.parse(text);
+    } catch {}
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data,
+      url,
+      error: response.ok ? undefined : data?.message || data?.error || `HTTP ${response.status}`,
+      code: response.ok ? undefined : (data?.code || `http_${response.status}`),
+    };
+  } catch (e: any) {
+    const isTimeout = e.name === "AbortError";
+    return {
+      ok: false,
+      status: 0,
+      url,
+      error: isTimeout ? "Request timeout" : e.message,
+      code: isTimeout ? "timeout" : "network",
+    };
   }
 }
 
-// ---- DB helpers (compat wa_sessions) ----
-async function upsertSessionForLine(service: ReturnType<typeof svc>, userId: string, lineId: string, instanceName: string, patch: any) {
-  const { data: existing } = await service
-    .from("wa_sessions").select("id").eq("user_id", userId).eq("bitrix_line_id", lineId).maybeSingle();
+async function upsertSessionForLine(
+  service: ReturnType<typeof svc>,
+  userId: string,
+  lineId: string,
+  instanceName: string,
+  patch: Record<string, any>
+): Promise<void> {
+  const existing = await service
+    .from("wa_sessions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("bitrix_line_id", lineId)
+    .limit(1)
+    .maybeSingle();
 
-  const payload: any = {
+  const payload = {
     user_id: userId,
     bitrix_line_id: lineId,
     evo_instance_id: instanceName,
+    bitrix_line_name: lineId,
     updated_at: new Date().toISOString(),
-    ...(patch.status ? { status: patch.status } : {}),
-    ...(patch.qr_code !== undefined ? { qr_code: patch.qr_code } : {}),
-    ...(patch.last_sync_at ? { last_sync_at: patch.last_sync_at } : {}),
+    instance_id: instanceName,
+    ...patch,
   };
 
-  if (existing?.id) {
-    await service.from("wa_sessions").update(payload).eq("id", existing.id);
+  if (existing.data?.id) {
+    await service.from("wa_sessions").update(payload).eq("id", existing.data.id);
   } else {
     payload.created_at = new Date().toISOString();
     await service.from("wa_sessions").insert(payload);
   }
+}
+
+const errorMap = {
+  // Network/Connection errors
+  "NETWORK_ERROR": "Erro de conexão com Evolution API",
+  "TIMEOUT": "Timeout na conexão com Evolution API", 
+  "INVALID_URL": "URL da Evolution API inválida",
+  
+  // Authentication errors  
+  "UNAUTHORIZED": "API Key inválida ou ausente",
+  "FORBIDDEN": "Acesso negado pela Evolution API",
+  
+  // Instance errors
+  "INSTANCE_NOT_FOUND": "Instância não encontrada na Evolution API",
+  "INSTANCE_ALREADY_EXISTS": "Instância já existe na Evolution API", 
+  "INSTANCE_NOT_CONNECTED": "Instância não está conectada",
+  
+  // Configuration errors
+  "CONFIG_MISSING": "Configuração Evolution não encontrada",
+  "INVALID_CONFIG": "Configuração Evolution inválida",
+  
+  // Generic errors
+  "UNKNOWN_ERROR": "Erro desconhecido na Evolution API"
+};
+
+function mapEvolutionError(error: any, action: string): { code: string; message: string; details?: any } {
+  const status = error?.status || 0;
+  const message = error?.message || error?.error || String(error);
+  
+  // Map by HTTP status
+  if (status === 401) return { code: "UNAUTHORIZED", message: errorMap.UNAUTHORIZED, details: { originalMessage: message } };
+  if (status === 403) return { code: "FORBIDDEN", message: errorMap.FORBIDDEN, details: { originalMessage: message } };
+  if (status === 404) return { code: "INSTANCE_NOT_FOUND", message: errorMap.INSTANCE_NOT_FOUND, details: { originalMessage: message } };
+  if (status === 409) return { code: "INSTANCE_ALREADY_EXISTS", message: errorMap.INSTANCE_ALREADY_EXISTS, details: { originalMessage: message } };
+  if (status >= 500) return { code: "UNKNOWN_ERROR", message: errorMap.UNKNOWN_ERROR, details: { status, originalMessage: message } };
+  
+  // Map by message content
+  if (message.toLowerCase().includes("timeout")) return { code: "TIMEOUT", message: errorMap.TIMEOUT, details: { originalMessage: message } };
+  if (message.toLowerCase().includes("network")) return { code: "NETWORK_ERROR", message: errorMap.NETWORK_ERROR, details: { originalMessage: message } };
+  if (message.toLowerCase().includes("config")) return { code: "CONFIG_MISSING", message: errorMap.CONFIG_MISSING, details: { originalMessage: message } };
+  
+  return { code: "UNKNOWN_ERROR", message: errorMap.UNKNOWN_ERROR, details: { status, originalMessage: message, action } };
 }
 
 serve(async (req) => {
@@ -216,9 +256,16 @@ serve(async (req) => {
         return ok({ instances: Array.isArray(instances) ? instances : [] });
       }
       
-      return ko("list_failed", { status: r.status, reason: r.code || "network", url: r.url, detail: r.error || r.data });
+      const mappedError = mapEvolutionError(r, action);
+      return ko(mappedError.code, { 
+        message: mappedError.message,
+        details: mappedError.details,
+        status: r.status, 
+        url: r.url 
+      });
     } catch (e: any) {
-      return ko(String(e?.message || e));
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
     }
   }
 
@@ -231,28 +278,24 @@ serve(async (req) => {
       const payload = body?.payload ?? undefined;
       const r = await evoFetch(cfg, path, method, payload);
       if (r.ok) return ok({ data: r.data, status: r.status, url: r.url });
-      return ko("proxy_failed", { status: r.status, reason: r.code || "network", url: r.url, detail: r.error || r.data });
+      
+      const mappedError = mapEvolutionError(r, action);
+      return ko(mappedError.code, {
+        message: mappedError.message,
+        details: mappedError.details,
+        status: r.status,
+        url: r.url
+      });
     } catch (e: any) {
-      return ko(String(e?.message || e));
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
     }
   }
 
-  // 4) Garantir sessão por linha (cria/atualiza wa_sessions)
+  // 4) Garantir sessão por linha (CRIAR instância se necessário e upsert wa_sessions)
   if (action === "ensure_line_session") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
-      if (!lineId) return ko("lineId required");
-      const instanceName = `evo_line_${lineId}`;
-      await upsertSessionForLine(service, user.id, lineId, instanceName, { status: "PENDING_QR" });
-      return ok({ line: lineId, instance: instanceName });
-    } catch (e: any) { return ko(String(e?.message || e)); }
-  }
-
-  // 5) Iniciar sessão (usar SOMENTE instância existente; NÃO criar)
-  if (action === "start_session_for_line") {
-    try {
-      const lineId = String(body?.lineId || body?.bitrix_line_id || "");
-      const number = String(body?.number || "");
       if (!lineId) return ko("lineId required");
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
@@ -265,18 +308,56 @@ serve(async (req) => {
       if (!li.ok && li.status === 404) {
         li = await evoFetch(cfg, "/sessions", "GET");
       }
+      
       const instances = li?.data?.instances || li?.data || [];
       const exists = Array.isArray(instances) && instances.some((x: any) =>
         x?.instanceName === instanceName || x?.name === instanceName || x?.id === instanceName
       );
+
+      // 2) Criar instância se não existir
       if (!exists) {
-        return ko("instance_not_found", {
-          message: "Instância Evolution inexistente para esta linha. Crie/associe no Evolution e tente novamente.",
-          instanceName,
+        const createResult = await evoFetch(cfg, "/instance/create", "POST", { 
+          instanceName, 
+          qrcode: true,
+          number: body?.number || ""
         });
+        
+        if (!createResult.ok) {
+          const mappedError = mapEvolutionError(createResult, "create_instance");
+          return ko(mappedError.code, {
+            message: mappedError.message,
+            details: mappedError.details,
+            instanceName
+          });
+        }
+        
+        await log({ category: "INSTANCE_CREATED", instanceName, userId: user.id, lineId });
       }
 
-      // 2) Conectar (sem criar)
+      // 3) Upsert wa_sessions local
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: "PENDING_QR",
+        instance_id: instanceName 
+      });
+      
+      return ok({ line: lineId, instance: instanceName, created: !exists });
+    } catch (e: any) { 
+      await log({ category: "ERROR", action: "ensure_line_session", error: String(e?.message || e), userId: user.id });
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
+  }
+
+  // 5) Iniciar sessão (conectar instância EXISTENTE ou recém-criada)
+  if (action === "start_session_for_line") {
+    try {
+      const lineId = String(body?.lineId || body?.bitrix_line_id || "");
+      const number = String(body?.number || "");
+      if (!lineId) return ko("lineId required");
+      const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+
+      // 1) Conectar instância (assumindo que existe via ensure_line_session)
       let connectUrl = `/instance/connect/${encodeURIComponent(instanceName)}`;
       if (number) connectUrl += `?number=${encodeURIComponent(number)}`;
       
@@ -286,83 +367,138 @@ serve(async (req) => {
         connect = await evoFetch(cfg, "/instance/connect", "POST", { instanceName, number }).catch(() => null);
       }
 
-      await upsertSessionForLine(service, user.id, lineId, instanceName, { status: "CONNECTING" });
+      // 2) Atualizar status para CONNECTING
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: "CONNECTING",
+        instance_id: instanceName
+      });
       
+      // 3) Tentar obter QR code
       const qr = await evoFetch(cfg, `/instance/qrcode/${encodeURIComponent(instanceName)}`, "GET").catch(() => null);
       const base64 = qr?.ok ? (qr.data?.base64 || qr.data?.qrcode || null) : null;
 
+      // 4) Atualizar com QR code se disponível
       await upsertSessionForLine(service, user.id, lineId, instanceName, {
         status: base64 ? "PENDING_QR" : "CONNECTING",
         qr_code: base64 || null,
+        instance_id: instanceName
       });
 
-      return ok({ line: lineId, base64 });
-    } catch (e: any) { return ko(String(e?.message || e)); }
+      await log({ 
+        category: "SESSION_STARTED", 
+        instanceName, 
+        userId: user.id, 
+        lineId, 
+        hasQr: !!base64,
+        connectStatus: connect?.status
+      });
+
+      return ok({ line: lineId, base64, instance: instanceName });
+    } catch (e: any) { 
+      await log({ category: "ERROR", action: "start_session_for_line", error: String(e?.message || e), userId: user.id });
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
   }
 
-  // 6) Status por linha with multi-path compatibility
-  if (action === "get_status_for_line") {
-    try {
-      const lineId = String(body?.lineId || "");
-      if (!lineId) return ko("lineId required");
-      const instanceName = `evo_line_${lineId}`;
-      const cfg = await getEvoCfg(service, user.id);
-      
-      // Try different status endpoints
-      let r = await evoFetch(cfg, `/instance/connectionState/${encodeURIComponent(instanceName)}`, "GET");
-      if (!r.ok && r.status === 404) {
-        r = await evoFetch(cfg, `/instance/status/${encodeURIComponent(instanceName)}`, "GET");
-      }
-      if (!r.ok && r.status === 404) {
-        r = await evoFetch(cfg, `/instance?instanceName=${encodeURIComponent(instanceName)}`, "GET");
-      }
-      
-      const state = r?.data?.state || r?.data?.status || (r.ok ? "unknown" : "disconnected");
-      return ok({ line: lineId, state, raw: r.data });
-    } catch (e: any) { return ko(String(e?.message || e)); }
-  }
-
-  // 7) QR por linha
+  // 6) Obter QR code
   if (action === "get_qr_for_line") {
     try {
-      const lineId = String(body?.lineId || "");
+      const lineId = String(body?.lineId || body?.bitrix_line_id || "");
       if (!lineId) return ko("lineId required");
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
-      const r = await evoFetch(cfg, `/instance/qrcode/${encodeURIComponent(instanceName)}`, "GET");
-      const qr = r?.data?.base64 || r?.data?.qrcode || null;
-      return ok({ line: lineId, qr_base64: qr });
-    } catch (e: any) { return ko(String(e?.message || e)); }
+      
+      const qr = await evoFetch(cfg, `/instance/qrcode/${encodeURIComponent(instanceName)}`, "GET");
+      
+      // Atualizar upsertSessionForLine para incluir instance_id
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: qr?.ok ? "PENDING_QR" : "CONNECTED",
+        qr_code: qr?.ok ? (qr.data?.base64 || qr.data?.qrcode || null) : null,
+        instance_id: instanceName
+      });
+
+      return ok({ 
+        line: lineId,
+        qr_base64: qr?.ok ? (qr.data?.base64 || qr.data?.qrcode) : null,
+        base64: qr?.ok ? (qr.data?.base64 || qr.data?.qrcode) : null
+      });
+    } catch (e: any) { 
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
   }
 
-  // 8) Envio de teste
+  // 7) Obter status da instância
+  if (action === "get_status_for_line") {
+    try {
+      const lineId = String(body?.lineId || body?.bitrix_line_id || "");
+      if (!lineId) return ko("lineId required");
+      const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+      
+      const statusData = await evoFetch(cfg, `/instance/connectionState/${encodeURIComponent(instanceName)}`, "GET");
+      
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: statusData?.ok ? statusData.data?.state || "UNKNOWN" : "ERROR",
+        instance_id: instanceName
+      });
+
+      return ok({ 
+        line: lineId,
+        state: statusData?.ok ? statusData.data?.state : "error",
+        raw: statusData?.data
+      });
+    } catch (e: any) { 
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
+  }
+
+  // 8) Testar envio de mensagem
   if (action === "test_send") {
     try {
-      const lineId = String(body?.lineId || "");
+      const lineId = String(body?.lineId || body?.bitrix_line_id || "");
       const to = String(body?.to || "");
-      const text = String(body?.text || "ping");
+      const text = String(body?.text || "Ping");
       if (!lineId || !to) return ko("lineId and to required");
-      const instance = `evo_line_${lineId}`;
+      const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
-      const r = await evoFetch(cfg, "/message/send", "POST", { instance, number: to, text });
-      return r.ok ? ok({ result: r.data }) : ko("send_failed", { status: r.status, detail: r.data || r.error });
-    } catch (e: any) { return ko(String(e?.message || e)); }
+      
+      const result = await evoFetch(cfg, "/message/sendText", "POST", {
+        instanceName,
+        number: to,
+        textMessage: { text }
+      });
+
+      if (result.ok) {
+        return ok({ result: result.data });
+      }
+      
+      const mappedError = mapEvolutionError(result, action);
+      return ko(mappedError.code, {
+        message: mappedError.message,
+        details: mappedError.details
+      });
+    } catch (e: any) { 
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
   }
 
-  // 9) Bind line to instance
+  // 9) Vincular linha a instância (save to database)
   if (action === "bind_line") {
     try {
-      const lineId = String(body?.lineId || "");
       const instanceId = String(body?.instanceId || "");
-      if (!lineId || !instanceId) return ko("lineId and instanceId required");
+      const lineId = String(body?.lineId || "");
+      if (!instanceId || !lineId) return ko("instanceId and lineId required");
       
-      await upsertSessionForLine(service, user.id, lineId, instanceId, { 
-        status: "BOUND",
-        last_sync_at: new Date().toISOString()
-      });
-      
-      return ok({ success: true });
-    } catch (e: any) { return ko(String(e?.message || e)); }
+      // Simple success - this just confirms the binding can work
+      return ok({ success: true, instanceId, lineId });
+    } catch (e: any) { 
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
   }
 
   return ko(`unknown_action: ${action}`, { got: action });

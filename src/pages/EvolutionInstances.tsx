@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Eye } from "lucide-react";
 import { api } from "@/api/provider";
 import { unwrap, isErr } from "@/core/result";
+import { ConnectionStatusIndicator } from "@/components/ConnectionStatusIndicator";
 
 export default function EvolutionInstances() {
   const navigate = useNavigate();
@@ -16,8 +17,16 @@ export default function EvolutionInstances() {
   const [testNumbers, setTestNumbers] = useState<{ [key: string]: string }>({});
   const [qrCodes, setQrCodes] = useState<{ [key: string]: string }>({});
   const [connectionStates, setConnectionStates] = useState<{ [key: string]: string }>({});
-  const [activePolling, setActivePolling] = useState<{ [key: string]: boolean }>({});
+  const [pollingInstances, setPollingInstances] = useState<Set<string>>(new Set());
   const [openChannels, setOpenChannels] = useState<any[]>([]);
+  const pollingIntervals = useRef<{ [key: string]: NodeJS.Timeout }>({});
+
+  // Limpeza de intervals ao desmontar
+  useEffect(() => {
+    return () => {
+      Object.values(pollingIntervals.current).forEach(clearInterval);
+    };
+  }, []);
 
   const loadInstances = async () => {
     try {
@@ -75,13 +84,6 @@ export default function EvolutionInstances() {
 
   const checkConnectionState = async (lineId: string) => {
     try {
-      console.log(JSON.stringify({
-        category: 'UI',
-        view: 'EvolutionInstances',
-        action: 'checkConnectionState',
-        lineId
-      }));
-
       const result = await api.evolution.status(lineId);
       
       if (isErr(result)) {
@@ -102,24 +104,25 @@ export default function EvolutionInstances() {
     }
   };
 
-  const startPolling = (lineId: string) => {
-    if (activePolling[lineId]) return;
+  const startSimplePolling = useCallback((lineId: string) => {
+    // Parar polling existente se houver
+    if (pollingIntervals.current[lineId]) {
+      clearInterval(pollingIntervals.current[lineId]);
+    }
 
-    setActivePolling(prev => ({ ...prev, [lineId]: true }));
+    setPollingInstances(prev => new Set(prev).add(lineId));
 
     const poll = async () => {
-      if (!activePolling[lineId]) return;
-
       try {
         const state = await checkConnectionState(lineId);
         
-        if (state === "connecting") {
-          // Get QR code
+        // Se conectando, tentar pegar QR code
+        if (state === "connecting" || state === "pending_qr") {
           try {
-            const result = await api.evolution.qr(lineId);
+            const qrResult = await api.evolution.qr(lineId);
             
-            if (!isErr(result)) {
-              const qrData = result.value;
+            if (!isErr(qrResult)) {
+              const qrData = qrResult.value;
               if (qrData?.qr_base64) {
                 setQrCodes(prev => ({ ...prev, [lineId]: `data:image/png;base64,${qrData.qr_base64}` }));
               } else if (qrData?.base64) {
@@ -129,48 +132,44 @@ export default function EvolutionInstances() {
           } catch (error) {
             console.error("Error getting QR:", error);
           }
-          
-          // Continue polling every 4 seconds
-          setTimeout(() => {
-            if (activePolling[lineId]) {
-              poll();
-            }
-          }, 4000);
-        } else if (state === "open") {
-          // Connected, stop polling and clear QR
-          setActivePolling(prev => ({ ...prev, [lineId]: false }));
+        } else if (state === "open" || state === "connected") {
+          // Conectado - parar polling
+          clearInterval(pollingIntervals.current[lineId]);
+          delete pollingIntervals.current[lineId];
+          setPollingInstances(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(lineId);
+            return newSet;
+          });
           setQrCodes(prev => ({ ...prev, [lineId]: "" }));
+          
           toast({
             title: "✅ Conectado",
             description: `Instância ${lineId} conectada com sucesso`,
           });
-        } else {
-          // Other states, stop polling after a few retries
-          const retryStates = ["close", "error", "unknown"];
-          if (retryStates.includes(state)) {
-            setTimeout(() => {
-              if (activePolling[lineId]) {
-                poll();
-              }
-            }, 4000);
-          } else {
-            setActivePolling(prev => ({ ...prev, [lineId]: false }));
-            setQrCodes(prev => ({ ...prev, [lineId]: "" }));
-          }
         }
       } catch (error) {
         console.error("Polling error:", error);
-        // Continue polling on error
-        setTimeout(() => {
-          if (activePolling[lineId]) {
-            poll();
-          }
-        }, 4000);
       }
     };
 
+    // Polling inicial e depois a cada 5 segundos
     poll();
-  };
+    pollingIntervals.current[lineId] = setInterval(poll, 5000);
+
+    // Auto-stop após 2 minutos
+    setTimeout(() => {
+      if (pollingIntervals.current[lineId]) {
+        clearInterval(pollingIntervals.current[lineId]);
+        delete pollingIntervals.current[lineId];
+        setPollingInstances(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(lineId);
+          return newSet;
+        });
+      }
+    }, 120000);
+  }, []);
 
   const createInstance = async () => {
     if (!newLineId) {
@@ -190,16 +189,17 @@ export default function EvolutionInstances() {
         lineId: newLineId
       }));
 
-      const result = await api.evolution.ensure(newLineId);
+      // Primeiro garante a instância
+      const ensureResult = await api.evolution.ensure(newLineId);
       
-      if (isErr(result)) {
-        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
-        throw new Error(errorMsg || "Failed to create instance");
+      if (isErr(ensureResult)) {
+        const errorMsg = ensureResult.error instanceof Error ? ensureResult.error.message : String(ensureResult.error);
+        throw new Error(errorMsg || "Failed to ensure instance");
       }
 
       toast({
-        title: "✅ Sucesso",
-        description: `Instância ${result.value?.instance} criada/garantida`,
+        title: "✅ Instância garantida",
+        description: `Instância ${ensureResult.value?.instance} criada/garantida`,
       });
       
       setNewLineId("");
@@ -238,7 +238,7 @@ export default function EvolutionInstances() {
         description: "Verificando status e gerando QR...",
       });
       
-      startPolling(lineId);
+      startSimplePolling(lineId);
     } catch (error: any) {
       console.error("Error connecting instance:", error);
       
@@ -389,9 +389,11 @@ export default function EvolutionInstances() {
                     <Link to={`/evolution/instances/${instance.id}`} className="hover:text-primary">
                       {(instance.instanceName || instance.instance?.instanceName) || instance.id}
                     </Link>
-                    <span className={`text-sm ${getStatusColor(state)}`}>
-                      {state}
-                    </span>
+                    <ConnectionStatusIndicator 
+                      status={state}
+                      isLoading={pollingInstances.has(lineId)}
+                      instanceName={instName}
+                    />
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -408,9 +410,9 @@ export default function EvolutionInstances() {
                         const lineId = instance.instanceName?.replace('evo_line_', '') || instance.id;
                         connectInstance(lineId);
                       }}
-                      disabled={connectionStates[instance.instanceName?.replace('evo_line_', '') || instance.id] === "connecting"}
+                      disabled={pollingInstances.has(instance.instanceName?.replace('evo_line_', '') || instance.id)}
                     >
-                      {connectionStates[instance.instanceName?.replace('evo_line_', '') || instance.id] === "connecting" 
+                      {pollingInstances.has(instance.instanceName?.replace('evo_line_', '') || instance.id)
                         ? "Conectando..." 
                         : "Conectar / QR"}
                     </Button>

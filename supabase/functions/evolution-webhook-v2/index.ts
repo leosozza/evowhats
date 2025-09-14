@@ -92,38 +92,71 @@ async function upsertContact(service: any, tenantId: string, phone: string, name
 }
 
 async function findLineIdByInstance(service: any, tenantId: string, waInstanceId: string): Promise<string | null> {
-  // Try new schema column
-  let { data, error } = await service
-    .from("open_channel_bindings")
-    .select("line_id")
-    .eq("tenant_id", tenantId)
-    .eq("wa_instance_id", waInstanceId)
-    .limit(1)
-    .maybeSingle();
+  // Busca mais robusta com fallback para múltiplas colunas
+  try {
+    // 1) Try wa_instance_id column
+    let { data } = await service
+      .from("open_channel_bindings")
+      .select("line_id")
+      .eq("tenant_id", tenantId)
+      .eq("wa_instance_id", waInstanceId)
+      .limit(1)
+      .maybeSingle();
 
-  if (data?.line_id) return data.line_id;
+    if (data?.line_id) return data.line_id;
 
-  // Fallback to legacy column name
-  const res2 = await service
-    .from("open_channel_bindings")
-    .select("line_id")
-    .eq("tenant_id", tenantId)
-    .eq("instance_id", waInstanceId)
-    .limit(1)
-    .maybeSingle();
-  return res2.data?.line_id || null;
+    // 2) Try instance_id column (legacy)
+    const res2 = await service
+      .from("open_channel_bindings")
+      .select("line_id")
+      .eq("tenant_id", tenantId)
+      .eq("instance_id", waInstanceId)
+      .limit(1)
+      .maybeSingle();
+
+    if (res2.data?.line_id) return res2.data.line_id;
+
+    // 3) Try matching by wa_sessions table
+    const res3 = await service
+      .from("wa_sessions")
+      .select("bitrix_line_id")
+      .eq("user_id", tenantId)
+      .eq("evo_instance_id", waInstanceId)
+      .limit(1)
+      .maybeSingle();
+
+    return res3.data?.bitrix_line_id || null;
+  } catch (error) {
+    console.error(`[evolution-webhook-v2] Error finding lineId for instance ${waInstanceId}:`, error);
+    return null;
+  }
 }
 
 async function sendToBitrixWithRetry(tenantId: string, method: string, params: any, retries = 3): Promise<any> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await callBitrixAPI(tenantId, method, params);
-    } catch (e) {
-      console.error(`[evolution-webhook-v2] Bitrix send attempt ${attempt}/${retries}:`, e);
-      if (attempt === retries) throw e;
+    } catch (e: any) {
+      const errorMsg = e?.message || String(e);
+      console.error(`[evolution-webhook-v2] Bitrix send attempt ${attempt}/${retries}:`, errorMsg);
       
-      // Exponential backoff: 1s, 3s, 7s
-      const delay = Math.pow(2, attempt) * 500 + Math.random() * 500;
+      // Não fazer retry para erros permanentes
+      const isPermanentError = errorMsg.toLowerCase().includes("unauthorized") || 
+                              errorMsg.toLowerCase().includes("forbidden") ||
+                              errorMsg.toLowerCase().includes("invalid") ||
+                              e?.status === 401 || 
+                              e?.status === 403;
+      
+      if (isPermanentError || attempt === retries) {
+        throw e;
+      }
+      
+      // Retry inteligente: backoff exponencial + jitter
+      const baseDelay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+      const jitter = Math.random() * 1000; // até 1s de variação
+      const delay = baseDelay + jitter;
+      
+      console.log(`[evolution-webhook-v2] Retrying in ${Math.round(delay)}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
