@@ -200,6 +200,7 @@ serve(async (req) => {
           const result = await callBitrixAPI(userId, "imconnector.register", {
             ID: body.connector || CONNECTOR_ID,
             NAME: body.name || "EvoWhats",
+            ICON: body.icon || "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDNi40NzcgMiAyIDYuNDc3IDIgMTJDMiAxNy41MjMgNi40NzcgMjIgMTIgMjJDMTcuNTIzIDIyIDIyIDE3LjUyMyAyMiAxMkMyMiA2LjQ3NyAxNy41MjMgMiAxMiAyWiIgZmlsbD0iIzI1RDM2NiIvPgo8cGF0aCBkPSJNMTYuNSA5LjVMMTEgMTVMNy41IDExLjUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
             CHAT_GROUP: body.chatGroup ?? "N",
           });
           return json({ success: true, result }, 200, origin);
