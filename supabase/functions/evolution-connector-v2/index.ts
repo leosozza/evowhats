@@ -300,7 +300,7 @@ serve(async (req) => {
   if (action === "ensure_line_session") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
 
@@ -346,7 +346,7 @@ serve(async (req) => {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
       const number = String(body?.number || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
 
@@ -398,7 +398,7 @@ serve(async (req) => {
   if (action === "get_qr_for_line") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
       
@@ -426,7 +426,7 @@ serve(async (req) => {
   if (action === "get_status_for_line") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
       
@@ -454,7 +454,8 @@ serve(async (req) => {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
       const to = String(body?.to || "");
       const text = String(body?.text || "Ping");
-      if (!lineId || !to) return ko("lineId and to required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
+      if (!to) return ko("MISSING_PARAM", { message: "to parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
       
@@ -484,7 +485,8 @@ serve(async (req) => {
     try {
       const instanceId = String(body?.instanceId || body?.waInstanceId || "");
       const lineId = String(body?.lineId || "");
-      if (!instanceId || !lineId) return ko("instanceId and lineId required");
+      if (!instanceId) return ko("MISSING_PARAM", { message: "instanceId parameter is required", status: 400 });
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       
       // Simple success - this just confirms the binding can work
       return ok({ success: true, instanceId, lineId });
@@ -499,7 +501,7 @@ serve(async (req) => {
     // Map to ensure_line_session directly
     try {
       const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
 
@@ -541,7 +543,7 @@ serve(async (req) => {
     // Map to get_status_for_line directly
     try {
       const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
       
@@ -567,7 +569,7 @@ serve(async (req) => {
     // Map to get_qr_for_line directly
     try {
       const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
-      if (!lineId) return ko("lineId required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
       
@@ -596,7 +598,8 @@ serve(async (req) => {
       const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
       const to = String(body?.to || "");
       const text = String(body?.text || "Ping");
-      if (!lineId || !to) return ko("lineId and to required");
+      if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
+      if (!to) return ko("MISSING_PARAM", { message: "to parameter is required", status: 400 });
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
       

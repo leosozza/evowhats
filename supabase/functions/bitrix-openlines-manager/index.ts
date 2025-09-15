@@ -24,8 +24,15 @@ function cors(origin?: string | null) {
   } as Record<string, string>;
 }
 
-function json(body: unknown, status = 200, origin?: string | null) {
-  return new Response(JSON.stringify(body), {
+function ok(data: any, status = 200, origin?: string | null) {
+  return new Response(JSON.stringify({ ok: true, ...data }), {
+    status,
+    headers: { ...cors(origin), "Content-Type": "application/json" },
+  });
+}
+
+function ko(status: number, error: any, origin?: string | null) {
+  return new Response(JSON.stringify({ ok: false, error }), {
     status,
     headers: { ...cors(origin), "Content-Type": "application/json" },
   });
@@ -73,7 +80,7 @@ serve(async (req) => {
 
   try {
     const userId = await getUserId(req);
-    if (!userId) return json({ error: "Unauthorized" }, 401, origin);
+    if (!userId) return ko(401, "Unauthorized", origin);
 
     const service = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
@@ -98,30 +105,34 @@ serve(async (req) => {
       if (body.placement_handler) params.PLACEMENT_HANDLER = body.placement_handler;
 
       const result = await callBitrixAPI(userId, "imconnector.register", params);
-      return json({ success: true, result }, 200, origin);
+      return ok({ result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/data-set")) {
       const body = await readBody();
       const connector = body.connector || CONNECTOR_ID;
+      const line = body.line || body.LINE;
+      if (!line) return ko(400, "LINE parameter is required for data-set", origin);
+      
       const data = body.data || body.DATA || {};
       const result = await callBitrixAPI(userId, "imconnector.connector.data.set", {
         CONNECTOR: connector,
+        LINE: line,
         DATA: data,
       });
-      return json({ success: true, result }, 200, origin);
+      return ok({ result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/activate")) {
       const body = await readBody();
       const connector = body.connector || CONNECTOR_ID;
       const line = body.line || body.LINE;
-      if (!line) return json({ success: false, error: "Missing line parameter" }, 400, origin);
+      if (!line) return ko(400, "LINE parameter is required for activate", origin);
       
       const active = body.active ?? true;
       const method = active ? "imconnector.activate" : "imconnector.deactivate";
       const result = await callBitrixAPI(userId, method, { CONNECTOR: connector, LINE: line });
-      return json({ success: true, result }, 200, origin);
+      return ok({ result }, 200, origin);
     }
 
     if (req.method === "GET" && path.endsWith("/bitrix-openlines-manager/status")) {
@@ -141,12 +152,12 @@ serve(async (req) => {
         activeConnections: statusResult?.result?.active_lines || []
       };
       
-      return json({ success: true, result: status, status, raw: statusResult }, 200, origin);
+      return ok({ result: status, status, raw: statusResult }, 200, origin);
     }
 
     if (req.method === "GET" && path.endsWith("/bitrix-openlines-manager/lines")) {
       const result = await callBitrixAPI(userId, "imopenlines.config.list.get", {});
-      return json({ success: true, result }, 200, origin);
+      return ok({ result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/lines/create")) {
@@ -159,18 +170,19 @@ serve(async (req) => {
         QUEUE_TYPE: "strictly_order",
       };
       const result = await callBitrixAPI(userId, "imopenlines.config.add", { FIELDS: fields });
-      return json({ success: true, result }, 200, origin);
+      return ok({ result }, 200, origin);
     }
 
     if (req.method === "POST" && path.endsWith("/bitrix-openlines-manager/bind-line")) {
       const body = await readBody();
       const lineId = String(body.line_id || body.lineId || body.LINE || "").trim();
       const waInstanceId = String(body.wa_instance_id || body.instance_id || body.waInstanceId || "").trim();
-      if (!lineId || !waInstanceId) return json({ success: false, error: "Missing line_id or wa_instance_id" }, 400, origin);
+      if (!lineId) return ko(400, "line_id parameter is required", origin);
+      if (!waInstanceId) return ko(400, "wa_instance_id parameter is required", origin);
 
       const { error } = await upsertBinding(service, userId, lineId, waInstanceId, userId);
-      if (error) return json({ success: false, error: error.message }, 500, origin);
-      return json({ success: true }, 200, origin);
+      if (error) return ko(500, error.message, origin);
+      return ok({}, 200, origin);
     }
 
     // Backward compatibility (action-based)
@@ -194,7 +206,7 @@ serve(async (req) => {
             activeConnections: statusResult?.result?.active_lines || []
           };
           
-          return json({ success: true, result: status, status, raw: statusResult }, 200, origin);
+          return ok({ result: status, status, raw: statusResult }, 200, origin);
         }
         case "register_connector": {
           const result = await callBitrixAPI(userId, "imconnector.register", {
@@ -203,37 +215,37 @@ serve(async (req) => {
             ICON: body.icon || "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDNi40NzcgMiAyIDYuNDc3IDIgMTJDMiAxNy41MjMgNi40NzcgMjIgMTIgMjJDMTcuNTIzIDIyIDIyIDE3LjUyMyAyMiAxMkMyMiA2LjQ3NyAxNy41MjMgMiAxMiAyWiIgZmlsbD0iIzI1RDM2NiIvPgo8cGF0aCBkPSJNMTYuNSA5LjVMMTEgMTVMNy41IDExLjUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
             CHAT_GROUP: body.chatGroup ?? "N",
           });
-          return json({ success: true, result }, 200, origin);
+          return ok({ result }, 200, origin);
         }
         case "publish_connector_data":
         case "data_set": {
           if (!body.line && !body.LINE) {
-            return json({ success: false, error: "LINE parameter is required for publish_connector_data", code: "MISSING_LINE_PARAM" }, 400, origin);
+            return ko(400, "LINE parameter is required for publish_connector_data", origin);
           }
           const result = await callBitrixAPI(userId, "imconnector.connector.data.set", {
             CONNECTOR: body.connector || CONNECTOR_ID,
             LINE: body.line || body.LINE,
             DATA: body.data || body.DATA || {},
           });
-          return json({ success: true, result }, 200, origin);
+          return ok({ result }, 200, origin);
         }
         case "add_to_contact_center":
         case "placement_add": {
-          if (!body.placement || !body.handlerUrl) {
-            return json({ success: false, error: "Missing placement or handlerUrl parameters", code: "MISSING_PLACEMENT_PARAMS" }, 400, origin);
-          }
+          if (!body.placement) return ko(400, "placement parameter is required", origin);
+          if (!body.handlerUrl) return ko(400, "handlerUrl parameter is required", origin);
+          
           const result = await callBitrixAPI(userId, "placement.bind", {
             PLACEMENT: body.placement,
             HANDLER: body.handlerUrl,
             TITLE: body.title || "EvoWhats",
             DESCRIPTION: body.description || "WhatsApp Integration",
           });
-          return json({ success: true, result }, 200, origin);
+          return ok({ result }, 200, origin);
         }
         case "list_lines":
         case "get_lines": {
           const result = await callBitrixAPI(userId, "imopenlines.config.list.get", {});
-          return json({ success: true, result }, 200, origin);
+          return ok({ result }, 200, origin);
         }
         case "create_line": {
           const result = await callBitrixAPI(userId, "imopenlines.config.add", {
@@ -244,27 +256,27 @@ serve(async (req) => {
               QUEUE_TYPE: "strictly_order",
             },
           });
-          return json({ success: true, result }, 200, origin);
+          return ok({ result }, 200, origin);
         }
         case "activate_connector": {
           if (!body.line && !body.LINE) {
-            return json({ success: false, error: "Missing line parameter", code: "MISSING_LINE_PARAM" }, 400, origin);
+            return ko(400, "LINE parameter is required for activate_connector", origin);
           }
           const method = (body.active !== false) ? "imconnector.activate" : "imconnector.deactivate";
           const result = await callBitrixAPI(userId, method, {
             CONNECTOR: body.connector || CONNECTOR_ID,
             LINE: body.line || body.LINE,
           });
-          return json({ success: true, result }, 200, origin);
+          return ok({ result }, 200, origin);
         }
         default:
-          return json({ success: false, error: "Invalid action" }, 400, origin);
+          return ko(400, `Invalid action: ${action}`, origin);
       }
     }
 
-    return json({ success: false, error: "Not Found" }, 404, origin);
+    return ko(404, "Not Found", origin);
   } catch (e) {
     console.error("[bitrix-openlines-manager] Error:", e);
-    return json({ success: false, error: String(e) }, 500, origin);
+    return ko(500, String(e), origin);
   }
 });
