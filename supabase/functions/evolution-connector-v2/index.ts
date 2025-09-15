@@ -13,8 +13,12 @@ const CORS = {
 
 function ok(data: any) { return new Response(JSON.stringify({ ok: true, ...data }), { headers: CORS }); }
 function ko(error: string, extra?: any) {
+  const status = extra?.status || 
+    (error === "UNAUTHORIZED" ? 401 : 
+     error === "INSTANCE_NOT_FOUND" ? 404 : 
+     error === "CONFIG_MISSING" ? 422 : 400);
   return new Response(JSON.stringify({ ok: false, error, code: error, ...extra }), {
-    status: 400,
+    status,
     headers: CORS,
   });
 }
@@ -478,7 +482,7 @@ serve(async (req) => {
   // 9) Vincular linha a instância (save to database)
   if (action === "bind_line") {
     try {
-      const instanceId = String(body?.instanceId || "");
+      const instanceId = String(body?.instanceId || body?.waInstanceId || "");
       const lineId = String(body?.lineId || "");
       if (!instanceId || !lineId) return ko("instanceId and lineId required");
       
@@ -490,5 +494,139 @@ serve(async (req) => {
     }
   }
 
-  return ko(`unknown_action: ${action}`, { got: action });
+  // Legacy compatibility actions for evolutionClient.ts
+  if (action === "instance.createOrAttach") {
+    // Map to ensure_line_session directly
+    try {
+      const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
+      if (!lineId) return ko("lineId required");
+      const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+
+      // Check if instance exists
+      let li = await evoFetch(cfg, "/instance/list", "GET");
+      if (!li.ok && li.status === 404) {
+        li = await evoFetch(cfg, "/instance/fetchInstances", "GET");
+      }
+      if (!li.ok && li.status === 404) {
+        li = await evoFetch(cfg, "/sessions", "GET");
+      }
+      
+      const instances = li?.data?.instances || li?.data || [];
+      const exists = Array.isArray(instances) && instances.some((x: any) =>
+        x?.instanceName === instanceName || x?.name === instanceName || x?.id === instanceName
+      );
+
+      if (!exists) {
+        return ko("INSTANCE_NOT_FOUND", {
+          message: `Instância ${instanceName} não encontrada. Crie a instância manualmente na Evolution API primeiro.`,
+          instanceName,
+          lineId
+        });
+      }
+
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: "PENDING_QR",
+        instance_id: instanceName 
+      });
+      
+      return ok({ line: lineId, instance: instanceName, exists: true });
+    } catch (e: any) {
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
+  }
+
+  if (action === "instance.status") {
+    // Map to get_status_for_line directly
+    try {
+      const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
+      if (!lineId) return ko("lineId required");
+      const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+      
+      const statusData = await evoFetch(cfg, `/instance/connectionState/${encodeURIComponent(instanceName)}`, "GET");
+      
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: statusData?.ok ? statusData.data?.state || "UNKNOWN" : "ERROR",
+        instance_id: instanceName
+      });
+
+      return ok({ 
+        line: lineId,
+        state: statusData?.ok ? statusData.data?.state : "error",
+        raw: statusData?.data
+      });
+    } catch (e: any) {
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
+  }
+
+  if (action === "instance.qr") {
+    // Map to get_qr_for_line directly
+    try {
+      const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
+      if (!lineId) return ko("lineId required");
+      const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+      
+      const qr = await evoFetch(cfg, `/instance/qrcode/${encodeURIComponent(instanceName)}`, "GET");
+      
+      await upsertSessionForLine(service, user.id, lineId, instanceName, { 
+        status: qr?.ok ? "PENDING_QR" : "CONNECTED",
+        qr_code: qr?.ok ? (qr.data?.base64 || qr.data?.qrcode || null) : null,
+        instance_id: instanceName
+      });
+
+      return ok({ 
+        line: lineId,
+        qr_base64: qr?.ok ? (qr.data?.base64 || qr.data?.qrcode) : null,
+        base64: qr?.ok ? (qr.data?.base64 || qr.data?.qrcode) : null
+      });
+    } catch (e: any) {
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
+  }
+
+  if (action === "send_message") {
+    // Map to test_send directly
+    try {
+      const lineId = String(body?.lineId || body?.instanceName?.replace("evo_line_", "") || "");
+      const to = String(body?.to || "");
+      const text = String(body?.text || "Ping");
+      if (!lineId || !to) return ko("lineId and to required");
+      const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+      
+      const result = await evoFetch(cfg, "/message/sendText", "POST", {
+        instanceName,
+        number: to,
+        textMessage: { text }
+      });
+
+      if (result.ok) {
+        return ok({ result: result.data });
+      }
+      
+      const mappedError = mapEvolutionError(result, action);
+      return ko(mappedError.code, {
+        message: mappedError.message,
+        details: mappedError.details
+      });
+    } catch (e: any) {
+      const mappedError = mapEvolutionError(e, action);
+      return ko(mappedError.code, mappedError);
+    }
+  }
+
+  return ko("UNKNOWN_ACTION", { 
+    message: `Ação '${action}' não reconhecida`, 
+    availableActions: [
+      "diag", "list_instances", "proxy", "ensure_line_session", "start_session_for_line", 
+      "get_qr_for_line", "get_status_for_line", "test_send", "bind_line",
+      "instance.createOrAttach", "instance.status", "instance.qr", "send_message"
+    ]
+  });
 });

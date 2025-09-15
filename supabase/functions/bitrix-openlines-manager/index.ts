@@ -206,20 +206,20 @@ serve(async (req) => {
         }
         case "publish_connector_data":
         case "data_set": {
-          if (!body.line) {
-            return json({ success: false, error: "LINE parameter is required for publish_connector_data" }, 400, origin);
+          if (!body.line && !body.LINE) {
+            return json({ success: false, error: "LINE parameter is required for publish_connector_data", code: "MISSING_LINE_PARAM" }, 400, origin);
           }
           const result = await callBitrixAPI(userId, "imconnector.connector.data.set", {
             CONNECTOR: body.connector || CONNECTOR_ID,
-            LINE: body.line,
-            DATA: body.data || {},
+            LINE: body.line || body.LINE,
+            DATA: body.data || body.DATA || {},
           });
           return json({ success: true, result }, 200, origin);
         }
         case "add_to_contact_center":
         case "placement_add": {
           if (!body.placement || !body.handlerUrl) {
-            return json({ success: false, error: "Missing placement or handlerUrl parameters" }, 400, origin);
+            return json({ success: false, error: "Missing placement or handlerUrl parameters", code: "MISSING_PLACEMENT_PARAMS" }, 400, origin);
           }
           const result = await callBitrixAPI(userId, "placement.bind", {
             PLACEMENT: body.placement,
@@ -246,13 +246,13 @@ serve(async (req) => {
           return json({ success: true, result }, 200, origin);
         }
         case "activate_connector": {
-          if (!body.line) {
-            return json({ success: false, error: "Missing line parameter" }, 400, origin);
+          if (!body.line && !body.LINE) {
+            return json({ success: false, error: "Missing line parameter", code: "MISSING_LINE_PARAM" }, 400, origin);
           }
-          const method = body.active ? "imconnector.activate" : "imconnector.deactivate";
+          const method = (body.active !== false) ? "imconnector.activate" : "imconnector.deactivate";
           const result = await callBitrixAPI(userId, method, {
             CONNECTOR: body.connector || CONNECTOR_ID,
-            LINE: body.line,
+            LINE: body.line || body.LINE,
           });
           return json({ success: true, result }, 200, origin);
         }

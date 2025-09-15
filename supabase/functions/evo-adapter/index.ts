@@ -20,7 +20,11 @@ function ok(data: any = {}) {
   return new Response(JSON.stringify({ ok: true, ...data }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" }});
 }
 function ko(error: string, extra: any = {}) {
-  return new Response(JSON.stringify({ ok: false, error, ...extra }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" }});
+  const status = extra?.status || 
+    (error === "Unauthorized" ? 401 : 
+     error === "Evolution API não configurada" ? 422 :
+     error.includes("not found") ? 404 : 400);
+  return new Response(JSON.stringify({ ok: false, error, ...extra }), { status, headers: { ...CORS, "Content-Type": "application/json" }});
 }
 
 function log(data: any) {
@@ -237,18 +241,47 @@ serve(async (req) => {
     }
   }
 
-  // 4) Garantir sessão por linha (cria/atualiza wa_sessions)
+  // 4) Garantir sessão por linha - VERIFICAR se instância existe, NÃO CRIAR automaticamente
   if (action === "ensure_line_session") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
       if (!lineId) return ko("lineId required");
       const instanceName = `evo_line_${lineId}`;
+      const cfg = await getEvoCfg(service, user.id);
+
+      // 1) Verificar se a instância já existe (multiplos endpoints)
+      let li = await evoFetch(cfg, "/instance/list", "GET");
+      if (!li.ok && li.status === 404) {
+        li = await evoFetch(cfg, "/instance/fetchInstances", "GET");
+      }
+      if (!li.ok && li.status === 404) {
+        li = await evoFetch(cfg, "/sessions", "GET");
+      }
+      
+      const instances = li?.data?.instances || li?.data || [];
+      const exists = Array.isArray(instances) && instances.some((x: any) =>
+        x?.instanceName === instanceName || x?.name === instanceName || x?.id === instanceName
+      );
+
+      // 2) Retornar erro se instância não existir
+      if (!exists) {
+        return ko("INSTANCE_NOT_FOUND", {
+          message: `Instância ${instanceName} não encontrada. Crie a instância manualmente na Evolution API primeiro.`,
+          instanceName,
+          lineId,
+          status: 404
+        });
+      }
+
+      // 3) Upsert wa_sessions local apenas se instância existir
       await upsertSessionForLine(service, user.id, lineId, instanceName, { status: "PENDING_QR" });
-      return ok({ line: lineId, instance: instanceName });
-    } catch (e: any) { return ko(String(e?.message || e)); }
+      return ok({ line: lineId, instance: instanceName, exists: true });
+    } catch (e: any) { 
+      return ko(String(e?.message || e));
+    }
   }
 
-  // 5) Iniciar sessão (cria/conecta e tenta QR)
+  // 5) Iniciar sessão (conectar instância EXISTENTE - NÃO CRIAR)
   if (action === "start_session_for_line") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
@@ -257,8 +290,8 @@ serve(async (req) => {
       const instanceName = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
 
-      // Create instance
-      await evoFetch(cfg, "/instance/create", "POST", { instanceName, qrcode: true }).catch(() => {});
+      // DON'T create instance automatically - let Evolution API handle it
+      // await evoFetch(cfg, "/instance/create", "POST", { instanceName, qrcode: true }).catch(() => {});
       
       // Try different connect patterns
       let connectUrl = `/instance/connect/${encodeURIComponent(instanceName)}`;
@@ -315,6 +348,12 @@ serve(async (req) => {
       const cfg = await getEvoCfg(service, user.id);
       const r = await evoFetch(cfg, `/instance/qrcode/${encodeURIComponent(instanceName)}`, "GET");
       const qr = r?.data?.base64 || r?.data?.qrcode || null;
+      
+      await upsertSessionForLine(service, user.id, lineId, instanceName, {
+        status: qr ? "PENDING_QR" : "CONNECTED",
+        qr_code: qr || null,
+      });
+
       return ok({ line: lineId, qr_base64: qr });
     } catch (e: any) { return ko(String(e?.message || e)); }
   }
@@ -328,7 +367,11 @@ serve(async (req) => {
       if (!lineId || !to) return ko("lineId and to required");
       const instance = `evo_line_${lineId}`;
       const cfg = await getEvoCfg(service, user.id);
-      const r = await evoFetch(cfg, "/message/send", "POST", { instance, number: to, text });
+      const r = await evoFetch(cfg, "/message/sendText", "POST", { 
+        instanceName: instance, 
+        number: to, 
+        textMessage: { text } 
+      });
       return r.ok ? ok({ result: r.data }) : ko("send_failed", { status: r.status, detail: r.data || r.error });
     } catch (e: any) { return ko(String(e?.message || e)); }
   }
@@ -337,7 +380,7 @@ serve(async (req) => {
   if (action === "bind_line") {
     try {
       const lineId = String(body?.lineId || "");
-      const instanceId = String(body?.instanceId || "");
+      const instanceId = String(body?.instanceId || body?.waInstanceId || "");
       if (!lineId || !instanceId) return ko("lineId and instanceId required");
       
       await upsertSessionForLine(service, user.id, lineId, instanceId, { 
@@ -349,5 +392,8 @@ serve(async (req) => {
     } catch (e: any) { return ko(String(e?.message || e)); }
   }
 
-  return ko(`unknown_action: ${action}`, { got: action });
+  return ko("unknown_action", { message: `Ação '${action}' não reconhecida`, got: action, availableActions: [
+    "diag", "list_instances", "proxy", "ensure_line_session", "start_session_for_line", 
+    "get_qr_for_line", "get_status_for_line", "test_send", "bind_line"
+  ]});
 });
