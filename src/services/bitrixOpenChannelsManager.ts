@@ -9,16 +9,24 @@ export interface ConnectorStatus {
 }
 
 export async function getOpenChannelsStatus(): Promise<ConnectorStatus> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: { action: "get_status" },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao verificar status");
   return data?.status || data?.result;
 }
 
 export async function listOpenChannelsLines() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines", {
     body: { action: "list_lines" },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao listar linhas");
   return data?.lines || data?.result || [];
@@ -30,11 +38,15 @@ export async function registerConnector(params: {
   icon: string;
   chatGroup?: string;
 }) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
       action: "register_connector",
       ...params,
     },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao registrar conector");
   return data;
@@ -44,11 +56,15 @@ export async function publishConnectorData(params: {
   connector: string;
   data: any;
 }) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
       action: "publish_connector_data",
       ...params,
     },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao publicar dados do conector");
   return data;
@@ -58,22 +74,30 @@ export async function addToContactCenter(params: {
   placement: string;
   handlerUrl: string;
 }) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
       action: "add_to_contact_center",
       ...params,
     },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao adicionar ao Contact Center");
   return data;
 }
 
 export async function createLine(name: string) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
       action: "create_line",
       name,
     },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao criar linha");
   return data;
@@ -84,11 +108,15 @@ export async function activateConnector(params: {
   line: string;
   active: boolean;
 }) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Usuário não autenticado");
+
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
       action: "activate_connector",
       ...params,
     },
+    headers: { Authorization: `Bearer ${session.access_token}` }
   });
   if (error) throw new Error(error.message || "Falha ao ativar conector");
   return data;

@@ -26,11 +26,15 @@ export interface EvolutionResponse {
 
 class EvolutionClient {
   async createInstance(lineId: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "ensure_line_session",
         lineId,
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -45,11 +49,15 @@ class EvolutionClient {
   }
 
   async getStatus(lineId: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "get_status_for_line",
         lineId,
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -64,11 +72,15 @@ class EvolutionClient {
   }
 
   async getQRCode(lineId: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "get_qr_for_line",
         lineId,
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -83,12 +95,16 @@ class EvolutionClient {
   }
 
   async startSession(lineId: string, number?: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "start_session_for_line",
         lineId,
         number,
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -99,6 +115,9 @@ class EvolutionClient {
   }
 
   async sendMessage(lineId: string, to: string, text: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "test_send",
@@ -106,6 +125,7 @@ class EvolutionClient {
         to,
         text,
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -116,12 +136,16 @@ class EvolutionClient {
   }
 
   async bindLine(lineId: string, waInstanceId: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "bind_line",
         lineId,
         waInstanceId,
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -132,10 +156,14 @@ class EvolutionClient {
   }
 
   async listInstances(): Promise<EvolutionResponse & { instances?: any[] }> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "list_instances",
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
@@ -146,10 +174,14 @@ class EvolutionClient {
   }
 
   async getDiagnostics(): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
         action: "diag",
       },
+      headers: { Authorization: `Bearer ${session.access_token}` }
     });
     
     if (error) {
