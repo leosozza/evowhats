@@ -187,7 +187,6 @@ serve(async (req) => {
 
     // Handle message events (existing and new outbound logic)
     if (eventType.toLowerCase().includes("message")) {
-    if (eventType.toLowerCase().includes("message")) {
       const message = payload?.data?.MESSAGE || payload?.data?.message;
       const messageText = message?.MESSAGE || message?.text || "";
       const authorId = String(message?.AUTHOR_ID || message?.authorId || "");
