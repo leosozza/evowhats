@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,9 @@ import { toast } from "@/hooks/use-toast";
 import { CheckCircle, Circle, AlertCircle, Loader2 } from "lucide-react";
 import { api } from "@/api/provider";
 import { isErr } from "@/core/result";
+import { supabase } from "@/integrations/supabase/client";
+import { listOpenChannelsLines, registerConnector, publishConnectorData, addToContactCenter, activateConnector } from "@/services/bitrixOpenChannelsManager";
+import { startBitrixOAuth } from "@/services/bitrixIntegration";
 
 interface SetupStep {
   id: string;
@@ -64,6 +67,22 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     ));
   };
 
+  // Verificar se retornou do OAuth do Bitrix24
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('oauth_success') === 'true') {
+      updateStepStatus("bitrix-oauth", true);
+      setCurrentStep(3);
+      toast({
+        title: "✅ Autenticação bem sucedida",
+        description: "Conectado ao Bitrix24 com sucesso"
+      });
+      
+      // Limpar parâmetros da URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   const validateEvolutionUrl = (url: string): string | null => {
     if (!url) return "URL é obrigatória";
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -99,8 +118,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
     setLoading(true);
     try {
-      // Salvar configuração (simulado - você deve implementar a API)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Salvar configuração na tabela user_configurations
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Usuário não autenticado");
+
+      const { error } = await supabase
+        .from("user_configurations")
+        .upsert({
+          user_id: user.id,
+          evolution_base_url: evolutionConfig.baseUrl.replace(/\/+$/, ""),
+          evolution_api_key: evolutionConfig.apiKey,
+          is_active: true
+        }, { onConflict: "user_id" });
+
+      if (error) throw error;
       
       updateStepStatus("evolution-config", true);
       toast({
@@ -108,10 +139,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         description: "Configuração Evolution salva com sucesso"
       });
       setCurrentStep(1);
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "❌ Erro",
-        description: "Falha ao salvar configuração",
+        description: error.message || "Falha ao salvar configuração",
         variant: "destructive"
       });
     } finally {
@@ -162,22 +193,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
     setLoading(true);
     try {
-      // Iniciar OAuth (simulado)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const result = await startBitrixOAuth(bitrixConfig.portalUrl);
       
-      updateStepStatus("bitrix-oauth", true);
-      toast({
-        title: "✅ Autenticação bem sucedida",
-        description: "Conectado ao Bitrix24 com sucesso"
-      });
-      setCurrentStep(3);
-    } catch (error) {
+      // Redirecionar para OAuth
+      window.location.href = result.auth_url;
+      
+    } catch (error: any) {
       toast({
         title: "❌ Erro de autenticação",
-        description: "Falha ao conectar com Bitrix24",
+        description: error.message || "Falha ao conectar com Bitrix24",
         variant: "destructive"
       });
-    } finally {
       setLoading(false);
     }
   };
@@ -185,8 +211,46 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
   const handleConnectorSetup = async () => {
     setLoading(true);
     try {
-      // Configurar conector (simulado)
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // 1. Verificar se existem linhas no Bitrix
+      const lines = await listOpenChannelsLines();
+      if (!lines || lines.length === 0) {
+        toast({
+          title: "⚠️ Nenhuma linha encontrada",
+          description: "Você precisa criar pelo menos uma linha de comunicação no Bitrix24 primeiro.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // 2. Registrar o conector
+      await registerConnector({
+        connector: "evolution_whatsapp",
+        name: "EvoWhats",
+        icon: "https://your-icon.com/whatsapp.png"
+      });
+
+      // 3. Publicar dados do conector para a primeira linha
+      const firstLine = lines[0];
+      await publishConnectorData({
+        connector: "evolution_whatsapp",
+        data: {
+          webhook_url: `${window.location.origin}/webhook/whatsapp`,
+          instance_name: `evo_line_${firstLine.id}`
+        }
+      });
+
+      // 4. Adicionar ao Contact Center
+      await addToContactCenter({
+        placement: "CRM_LEAD_LIST_MENU",
+        handlerUrl: `${window.location.origin}/bitrix-handler`
+      });
+
+      // 5. Ativar o conector
+      await activateConnector({
+        connector: "evolution_whatsapp",
+        line: firstLine.id,
+        active: true
+      });
       
       updateStepStatus("bitrix-connector", true);
       toast({
@@ -197,10 +261,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       if (onComplete) {
         onComplete();
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "❌ Erro no conector",
-        description: "Falha ao configurar conector",
+        description: error.message || "Falha ao configurar conector",
         variant: "destructive"
       });
     } finally {

@@ -25,11 +25,11 @@ export interface EvolutionResponse {
 }
 
 class EvolutionClient {
-  async createInstance(instanceName: string): Promise<EvolutionResponse> {
+  async createInstance(lineId: string): Promise<EvolutionResponse> {
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
-        action: "instance.createOrAttach",
-        instanceName,
+        action: "ensure_line_session",
+        lineId,
       },
     });
     
@@ -39,16 +39,16 @@ class EvolutionClient {
     
     return {
       ok: true,
-      instanceId: data?.instanceId || instanceName,
+      instanceId: data?.instance || `evo_line_${lineId}`,
       ...data,
     };
   }
 
-  async getStatus(instanceName: string): Promise<EvolutionResponse> {
+  async getStatus(lineId: string): Promise<EvolutionResponse> {
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
-        action: "instance.status",
-        instanceName,
+        action: "get_status_for_line",
+        lineId,
       },
     });
     
@@ -58,16 +58,16 @@ class EvolutionClient {
     
     return {
       ok: true,
-      status: data?.status || data?.state || "unknown",
+      status: data?.state || "unknown",
       ...data,
     };
   }
 
-  async getQRCode(instanceName: string): Promise<EvolutionResponse> {
+  async getQRCode(lineId: string): Promise<EvolutionResponse> {
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
-        action: "instance.qr",
-        instanceName,
+        action: "get_qr_for_line",
+        lineId,
       },
     });
     
@@ -77,33 +77,34 @@ class EvolutionClient {
     
     return {
       ok: true,
-      qrCode: data?.qrCode || data?.qr,
+      qrCode: data?.qr_base64 || data?.base64,
       ...data,
     };
   }
 
-  async logout(instanceName: string): Promise<EvolutionResponse> {
+  async startSession(lineId: string, number?: string): Promise<EvolutionResponse> {
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
-        action: "instance.logout",
-        instanceName,
+        action: "start_session_for_line",
+        lineId,
+        number,
       },
     });
     
     if (error) {
-      return { ok: false, error: error.message || "Falha ao desconectar" };
+      return { ok: false, error: error.message || "Falha ao iniciar sessão" };
     }
     
     return { ok: true, ...data };
   }
 
-  async sendMessage(instanceName: string, to: string, text: string): Promise<EvolutionResponse> {
+  async sendMessage(lineId: string, to: string, text: string): Promise<EvolutionResponse> {
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
-        action: "send_message",
-        instanceName,
+        action: "test_send",
+        lineId,
         to,
-        message: { text },
+        text,
       },
     });
     
@@ -114,18 +115,17 @@ class EvolutionClient {
     return { ok: true, ...data };
   }
 
-  async sendMediaMessage(instanceName: string, to: string, mediaUrl: string, caption?: string): Promise<EvolutionResponse> {
+  async bindLine(lineId: string, waInstanceId: string): Promise<EvolutionResponse> {
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: {
-        action: "send_message",
-        instanceName,
-        to,
-        message: { mediaUrl, caption },
+        action: "bind_line",
+        lineId,
+        waInstanceId,
       },
     });
     
     if (error) {
-      return { ok: false, error: error.message || "Falha ao enviar mídia" };
+      return { ok: false, error: error.message || "Falha ao vincular linha" };
     }
     
     return { ok: true, ...data };

@@ -204,7 +204,8 @@ serve(async (req) => {
           });
           return json({ success: true, result }, 200, origin);
         }
-        case "publish_connector_data": {
+        case "publish_connector_data":
+        case "data_set": {
           if (!body.line) {
             return json({ success: false, error: "LINE parameter is required for publish_connector_data" }, 400, origin);
           }
@@ -215,7 +216,8 @@ serve(async (req) => {
           });
           return json({ success: true, result }, 200, origin);
         }
-        case "add_to_contact_center": {
+        case "add_to_contact_center":
+        case "placement_add": {
           if (!body.placement || !body.handlerUrl) {
             return json({ success: false, error: "Missing placement or handlerUrl parameters" }, 400, origin);
           }

@@ -347,16 +347,21 @@ export function Wizard() {
       }));
 
       // Test message sending
-      const testResult = await evolutionClient.sendMessage(
-        state.evolution.instanceName!,
-        "5511999999999", // Test number
-        "Teste de integração EvoWhats ✅"
-      );
+      const lineId = state.connector.lineId;
+      let testResult = { ok: false };
+      
+      if (lineId) {
+        testResult = await evolutionClient.sendMessage(
+          lineId,
+          "5511999999999", // Test number
+          "Teste de integração EvoWhats ✅"
+        );
 
-      setState(prev => ({
-        ...prev,
-        binding: { ...prev.binding, tested: testResult.ok },
-      }));
+        setState(prev => ({
+          ...prev,
+          binding: { ...prev.binding, tested: testResult.ok },
+        }));
+      }
 
       toast({
         title: testResult.ok ? "Integração completa!" : "Binding criado",

@@ -46,8 +46,7 @@ export async function publishConnectorData(params: {
 }) {
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
-   action: "data_set", 
-     
+      action: "publish_connector_data",
       ...params,
     },
   });
@@ -58,12 +57,10 @@ export async function publishConnectorData(params: {
 export async function addToContactCenter(params: {
   placement: string;
   handlerUrl: string;
-  
-  
 }) {
   const { data, error } = await supabase.functions.invoke("bitrix-openlines-manager", {
     body: {
-   action: "placement_add",
+      action: "add_to_contact_center",
       ...params,
     },
   });

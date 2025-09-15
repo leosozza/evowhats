@@ -292,7 +292,7 @@ serve(async (req) => {
     }
   }
 
-  // 4) Garantir sessão por linha (CRIAR instância se necessário e upsert wa_sessions)
+  // 4) Garantir sessão por linha (NÃO CRIAR instância automaticamente)
   if (action === "ensure_line_session") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
@@ -314,33 +314,22 @@ serve(async (req) => {
         x?.instanceName === instanceName || x?.name === instanceName || x?.id === instanceName
       );
 
-      // 2) Criar instância se não existir
+      // 2) Retornar erro se instância não existir
       if (!exists) {
-        const createResult = await evoFetch(cfg, "/instance/create", "POST", { 
-          instanceName, 
-          qrcode: true,
-          number: body?.number || ""
+        return ko("INSTANCE_NOT_FOUND", {
+          message: `Instância ${instanceName} não encontrada. Crie a instância manualmente na Evolution API primeiro.`,
+          instanceName,
+          lineId
         });
-        
-        if (!createResult.ok) {
-          const mappedError = mapEvolutionError(createResult, "create_instance");
-          return ko(mappedError.code, {
-            message: mappedError.message,
-            details: mappedError.details,
-            instanceName
-          });
-        }
-        
-        await log({ category: "INSTANCE_CREATED", instanceName, userId: user.id, lineId });
       }
 
-      // 3) Upsert wa_sessions local
+      // 3) Upsert wa_sessions local apenas se instância existir
       await upsertSessionForLine(service, user.id, lineId, instanceName, { 
         status: "PENDING_QR",
         instance_id: instanceName 
       });
       
-      return ok({ line: lineId, instance: instanceName, created: !exists });
+      return ok({ line: lineId, instance: instanceName, exists: true });
     } catch (e: any) { 
       await log({ category: "ERROR", action: "ensure_line_session", error: String(e?.message || e), userId: user.id });
       const mappedError = mapEvolutionError(e, action);
