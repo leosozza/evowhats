@@ -17,14 +17,14 @@ const CORS = {
 type EvoCfg = { baseUrl: string; apiKey: string };
 
 function ok(data: any = {}) {
-  return new Response(JSON.stringify({ ok: true, ...data }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" }});
+  return new Response(JSON.stringify({ success: true, ok: true, ...data }), { status: 200, headers: { ...CORS, "Content-Type": "application/json" }});
 }
 function ko(error: string, extra: any = {}) {
   const status = extra?.status || 
     (error === "Unauthorized" ? 401 : 
      error === "Evolution API não configurada" ? 422 :
      error.includes("not found") ? 404 : 400);
-  return new Response(JSON.stringify({ ok: false, error, ...extra }), { status, headers: { ...CORS, "Content-Type": "application/json" }});
+  return new Response(JSON.stringify({ success: false, ok: false, error, ...extra }), { status, headers: { ...CORS, "Content-Type": "application/json" }});
 }
 
 function log(data: any) {

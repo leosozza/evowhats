@@ -11,13 +11,13 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
-function ok(data: any) { return new Response(JSON.stringify({ ok: true, ...data }), { headers: CORS }); }
+function ok(data: any) { return new Response(JSON.stringify({ success: true, ok: true, ...data }), { headers: CORS }); }
 function ko(error: string, extra?: any) {
   const status = extra?.status || 
     (error === "UNAUTHORIZED" ? 401 : 
      error === "INSTANCE_NOT_FOUND" ? 404 : 
      error === "CONFIG_MISSING" ? 422 : 400);
-  return new Response(JSON.stringify({ ok: false, error, code: error, ...extra }), {
+  return new Response(JSON.stringify({ success: false, ok: false, error, code: error, ...extra }), {
     status,
     headers: CORS,
   });

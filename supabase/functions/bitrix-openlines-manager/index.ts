@@ -25,14 +25,14 @@ function cors(origin?: string | null) {
 }
 
 function ok(data: any, status = 200, origin?: string | null) {
-  return new Response(JSON.stringify({ ok: true, ...data }), {
+  return new Response(JSON.stringify({ success: true, ok: true, ...data }), {
     status,
     headers: { ...cors(origin), "Content-Type": "application/json" },
   });
 }
 
 function ko(status: number, error: any, origin?: string | null) {
-  return new Response(JSON.stringify({ ok: false, error }), {
+  return new Response(JSON.stringify({ success: false, ok: false, error }), {
     status,
     headers: { ...cors(origin), "Content-Type": "application/json" },
   });
