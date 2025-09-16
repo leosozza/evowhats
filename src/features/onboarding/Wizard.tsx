@@ -24,6 +24,7 @@ import { Transport } from "@/core/transport";
 import { Evolution } from "@/services/evolution";
 import { bitrixManager } from "@/services/bitrixManager";
 import { evolutionClient } from "@/services/evolutionClient";
+import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ConnectBitrixButton from "@/components/bitrix/ConnectBitrixButton";
 import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
@@ -556,34 +557,79 @@ export function Wizard() {
                   </Alert>
                 )}
 
-                <Button 
-                  onClick={handleEvolutionConnect} 
-                  disabled={loading || !state.evolution.instanceName}
-                  className="w-full"
-                >
-                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {state.evolution.connected ? "Reconectar" : "Conectar WhatsApp"}
-                </Button>
+                <div className="space-y-3">
+                  <Button 
+                    onClick={handleEvolutionConnect} 
+                    disabled={loading || !state.evolution.instanceName}
+                    className="w-full"
+                  >
+                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {state.evolution.connected ? "Reconectar" : "Conectar WhatsApp"}
+                  </Button>
 
-                <Button
-                  variant="secondary"
-                  onClick={async () => {
-                    try {
-                      const diag = await evolutionClient.diag();
-                      console.log("[evolution diag]", diag);
-                      const env = (diag?.data && (diag as any).data.env) || (diag as any).env; // compat
-                      const msg = env
-                        ? `EVOLUTION_BASE_URL: ${env.base_set ? "OK" : "FALTANDO"} | API_KEY: ${env.key_set ? "OK" : "FALTANDO"}`
-                        : JSON.stringify(diag);
-                      toast({ title: "Diagnóstico Evolution", description: msg });
-                    } catch (e: any) {
-                      toast({ title: "Diag falhou", description: e?.message || String(e), variant: "destructive" });
-                    }
-                  }}
-                  className="w-full"
-                >
-                  Diagnóstico Evolution
-                </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={async () => {
+                        try {
+                          const diag = await evolutionClient.diag();
+                          console.log("[evolution diag]", diag);
+                          const discovered = diag?.data?.discovered;
+                          toast({
+                            title: "Diagnóstico Evolution",
+                            description: discovered?.paths 
+                              ? `Paths OK: ${Object.keys(discovered.paths).join(", ")}` 
+                              : "Erro na detecção de paths",
+                            variant: discovered?.paths ? "default" : "destructive"
+                          });
+                        } catch (e: any) {
+                          console.error("Diagnostic error:", e);
+                          toast({
+                            title: "Erro no diagnóstico",
+                            description: e.message,
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      🔧 Diagnóstico
+                    </Button>
+
+                    <Button
+                      variant="secondary"
+                      onClick={async () => {
+                        try {
+                          const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
+                            body: { action: 'diag_instances' }
+                          });
+                          console.log("[diag_instances]", data);
+                          if (data?.success) {
+                            const count = Array.isArray(data.data?.body) ? data.data.body.length : 0;
+                            toast({
+                              title: "Instâncias Evolution",
+                              description: `Status ${data.data?.status}: ${count} instância(s)`,
+                            });
+                          } else {
+                            toast({
+                              title: "Erro ao listar",
+                              description: data?.error || "Erro desconhecido",
+                              variant: "destructive"
+                            });
+                          }
+                        } catch (e: any) {
+                          console.error("Instance list error:", e);
+                          toast({
+                            title: "Erro",
+                            description: e.message,
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    >
+                      📋 Listar
+                    </Button>
+                  </div>
+                </div>
 
                 <Button
                   variant="outline"

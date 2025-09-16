@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances } from "../_shared/evolution.ts";
+import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances, getDiscovered } from "../_shared/evolution.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -64,24 +64,30 @@ serve(async (req) => {
 
       const trace: any = { step: "start", line, name };
 
-      const ensured = await ensureInstance(name, AUTO);
-      trace.ensureInstance = ensured;
+    const ensured = await (async () => {
+      // tenta listar antes, já força descoberta
+      const li = await listInstances().catch(()=>null);
+      trace.list = li;
+      // emulate ensureInstance com create fallback usando adapter que já tenta vários payloads
+      const st = await getStatus(name).catch(()=>null);
+      trace.status = st;
+      if (st?.ok) return { exists:true, created:false, data: st.data };
+      const cr = await createInstance(name, Deno.env.get("EVOLUTION_INTEGRATION") || "WHATSAPP-BAILEYS").catch(()=>null);
+      trace.create = cr;
+      if (cr?.ok || cr?.status === 201 || cr?.status === 409) return { exists:true, created: cr?.status !== 409, data: cr?.data };
+      return { exists:false, created:false, error: cr?.data || cr };
+    })();
 
-      if (!ensured?.exists) {
-        // Se o adapter sinalizou config faltando, propaga
-        if (ensured?.error?.code === "EVOLUTION_CONFIG_MISSING") {
-          return J(origin, { success:false, ok:false, code:"EVOLUTION_CONFIG_MISSING", error: ensured.error.error, data:{ trace } });
-        }
-        // Se a criação falhou, traga o payload bruto do Evolution
-        if (ensured?.error) {
-          return J(origin, { success:false, ok:false, code:"EVOLUTION_CREATE_FAILED", error:"Falha ao criar instância Evolution", data:{ reason: ensured.error, trace } });
-        }
-        // Sem detalhes → INSTANCE_NOT_FOUND
-        return J(origin, { success:false, ok:false, code:"INSTANCE_NOT_FOUND", error:"Instância não encontrada", data:{ instanceName:name, line:String(line), trace } });
+    if (!ensured?.exists) {
+      if (ensured?.error?.code === "EVOLUTION_CONFIG_MISSING") {
+        return J(origin, { success:false, ok:false, code:"EVOLUTION_CONFIG_MISSING", error: ensured.error.error, data:{ trace } });
       }
+      // motivo bruto de falha
+      return J(origin, { success:false, ok:false, code:"EVOLUTION_CREATE_FAILED", error:"Falha ao criar instância Evolution", data:{ reason: ensured?.error, trace } });
+    }
 
-      const conn = await connectInstance(name).catch((e:any) => ({ ok:false, error:String(e?.message || e) }));
-      trace.connectInstance = conn;
+      const conn = await connectInstance(name).catch((e:any)=>({ ok:false, error:String(e?.message||e) }));
+      trace.connect = conn;
 
       const startedAt = Date.now();
       let qrB64: string | null = null;
@@ -141,44 +147,17 @@ serve(async (req) => {
   // Ação diag_evolution_full (nova)
   if (action === "diag_evolution_full") {
     try {
-      const base = Deno.env.get("EVOLUTION_BASE_URL") || null;
-      const key  = Deno.env.get("EVOLUTION_API_KEY") || null;
-      
-      const env = { 
-        base_set: !!base, 
-        key_set: !!key,
-        base_url: base ? base.substring(0, 50) + (base.length > 50 ? "..." : "") : null,
-        prefix: PREFIX,
-        auto_create: AUTO,
-        poll_ms: POLL_MS,
-        poll_timeout: POLL_TIMEOUT
-      };
-      
-      let reach = null;
+      const base = (Deno.env.get("EVOLUTION_BASE_URL") || "").trim();
+      const key  = (Deno.env.get("EVOLUTION_API_KEY")  || "").trim();
+      let reach: any = null;
       if (base) {
-        try {
-          const res = await fetch(base, { method: "GET" });
-          reach = { ok: res.ok, status: res.status, statusText: res.statusText };
-        } catch (e) {
-          reach = { ok: false, error: String(e) };
-        }
+        try { const resp = await fetch(base, { method:"GET" }); reach = { ok: resp.ok, status: resp.status }; }
+        catch (e:any) { reach = { ok:false, error: String(e?.message || e) }; }
       }
-      
-      const instances = await listInstances().catch((e) => ({ error: String(e), list: [] }));
-      
-      return J(origin, { 
-        success: true, 
-        ok: true, 
-        data: { env, reach, instances } 
-      });
+      const discovered = await getDiscovered().catch((e:any)=>({ error: String(e?.message || e) }));
+      return J(origin, { success:true, ok:true, data:{ env:{ base_set: !!base, key_set: !!key }, reach, discovered }});
     } catch (e:any) {
-      return J(origin, { 
-        success: false, 
-        ok: false, 
-        code: "DIAG_FAIL", 
-        error: e?.message || String(e),
-        data: { trace: { thrown: true, stack: e?.stack } }
-      });
+      return J(origin, { success:false, ok:false, code:"DIAG_FAIL", error: e?.message || String(e) });
     }
   }
 
