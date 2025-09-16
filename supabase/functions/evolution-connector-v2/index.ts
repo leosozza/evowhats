@@ -47,10 +47,6 @@ function log(data: any) {
   console.log(`[evolution-connector-v2] ${JSON.stringify(data)}`);
 }
 
-function instanceNameFor(lineId: string | number, custom?: string) {
-  if (custom && custom.trim().length > 0) return custom.trim();
-  return `${PREFIX}${lineId}`;
-}
 
 function normalizeBase(u: string): string {
   return u?.replace(/\/+$/, "") || "";
