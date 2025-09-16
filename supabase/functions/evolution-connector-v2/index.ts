@@ -1,12 +1,18 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureInstance, getQr, listInstances } from "../_shared/evolution.ts";
+import { ensureInstance, getQr, listInstances, connectInstance, getStatus, normalizeQr } from "../_shared/evolution.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const PREFIX = Deno.env.get("EVOLUTION_INSTANCE_PREFIX") ?? "evo_line_";
 const AUTO = (Deno.env.get("EVOLUTION_AUTO_CREATE_INSTANCES") ?? "true").toLowerCase() === "true";
+const POLL_MS = Number(Deno.env.get("EVOLUTION_QR_POLL_MS") ?? 1500);
+const POLL_TIMEOUT = Number(Deno.env.get("EVOLUTION_QR_POLL_TIMEOUT_MS") ?? 120000);
+
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -639,7 +645,7 @@ serve(async (req) => {
     try {
       const origin = req.headers.get("origin");
       const { lineId, instanceName } = body ?? {};
-      const name = instName(lineId ?? "1", instanceName);
+      const name = instanceNameFor(lineId ?? "1", instanceName);
 
       // 1) Garantir/criar instância
       const ensured = await ensureInstance(name, AUTO);
@@ -687,7 +693,7 @@ serve(async (req) => {
     try {
       const origin = req.headers.get("origin");
       const { instanceName, lineId } = body ?? {};
-      const name = instName(lineId ?? "1", instanceName);
+      const name = instanceNameFor(lineId ?? "1", instanceName);
       const qr = await getQr(name).catch(() => null);
       const st = await getStatus(name).catch(() => null);
       const base64 = qr?.data ? normalizeQr(qr.data) : null;

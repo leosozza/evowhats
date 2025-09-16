@@ -322,16 +322,17 @@ export function Wizard() {
           });
         }
       } else {
-        throw new Error(result.error || "Falha na conexão");
+        console.error("[connectWhatsapp] fail:", result);
+        throw new Error(result.code || result.error || "Falha na conexão");
       }
-    } catch (error) {
-      console.error("Erro ao conectar Evolution:", error);
+    } catch (error: any) {
+      console.error("[connectWhatsapp] error:", error);
+      setShowQrModal(false);
       toast({
-        title: "Erro na Conexão",
-        description: error instanceof Error ? error.message : "Falha ao conectar com WhatsApp",
+        title: error?.code || "Erro na Conexão",
+        description: error?.message || "Verifique Evolution API (URL, API key, rotas).",
         variant: "destructive"
       });
-      setShowQrModal(false);
     }
   };
 

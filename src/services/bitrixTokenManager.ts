@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 
 export interface TokenRefreshResult {
@@ -26,26 +25,25 @@ export async function refreshBitrixToken(userId: string, portalUrl: string): Pro
       return { success: false, error: "Refresh token não disponível" };
     }
 
-    // Call refresh endpoint
-    const response = await fetch(`${portalUrl}/oauth/token/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+    // Call refresh endpoint via Edge Function to avoid CORS
+    const { data, error } = await supabase.functions.invoke("bitrix-oauth-refresh", {
+      body: {
+        portalUrl,
+        refreshToken: credentials.refresh_token,
+        clientId: credentials.client_id,
+        clientSecret: credentials.client_secret,
       },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: credentials.client_id,
-        client_secret: credentials.client_secret,
-        refresh_token: credentials.refresh_token,
-      }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "Unknown error");
-      return { success: false, error: `HTTP ${response.status}: ${errorText}` };
+    if (error) {
+      return { success: false, error: error.message };
     }
 
-    const tokenData = await response.json();
+    if (!data?.success) {
+      return { success: false, error: data?.error || "Token refresh failed" };
+    }
+
+    const tokenData = data.data;
 
     if (!tokenData.access_token) {
       return { success: false, error: "Novo access token não retornado" };
