@@ -21,7 +21,7 @@ export const listInstances = () => evo(P_LIST, "GET");
 export const createInstance = (name: string) =>
   evo(P_CREATE, "POST", { instanceName: name, integration: INTEGRATION, qrcode: true });
 export const connectInstance = (name: string) =>
-  evo(P_CONNECT, "POST", { instanceName: name }); // aciona geração de QR
+  evo(P_CONNECT, "POST", { instanceName: name });
 export const getStatus = (name: string) =>
   evo(P_STATUS, "POST", { instanceName: name });
 export const getQr = (name: string) =>
@@ -29,35 +29,25 @@ export const getQr = (name: string) =>
 
 export function normalizeQr(data: any): string | null {
   const pick = (v: any) => (typeof v === "string" && v.length > 50 ? v : null);
-  const candidates = [
-    data?.base64, data?.qr_base64, data?.qr, data?.qrcode, data?.qrCode,
-    data?.image?.base64, data?.data?.qr?.base64, data?.data?.qrcode
-  ];
-  for (const c of candidates) {
-    const hit = pick(c);
-    if (hit) return hit.startsWith("data:") ? hit.split(",")[1] : hit;
-  }
+  const cands = [data?.base64, data?.qr_base64, data?.qr, data?.qrcode, data?.qrCode, data?.image?.base64, data?.data?.qr?.base64, data?.data?.qrcode];
+  for (const c of cands) { const hit = pick(c); if (hit) return hit.startsWith("data:") ? hit.split(",")[1] : hit; }
   return null;
 }
 export const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-export async function ensureInstance(instanceName: string, autoCreate = true) {
-  // 1) Ver se existe listando (melhor desempenho quando servidor suporta)
-  const list = await listInstances();
-  if (list.ok && Array.isArray(list.data)) {
-    const hit = list.data.find((it: any) =>
-      it?.instanceName === instanceName || it?.name === instanceName || it?.id === instanceName);
-    if (hit) return { created: false, exists: true, status: 200, data: hit };
+export async function ensureInstance(name: string, autoCreate = true) {
+  const li = await listInstances().catch(() => null);
+  if (li?.ok && Array.isArray(li.data)) {
+    const hit = li.data.find((it: any) =>
+      it?.instanceName === name || it?.name === name || it?.id === name);
+    if (hit) return { exists: true, created: false, data: hit };
   }
-  // 2) Consultar status por nome
-  const st = await getStatus(instanceName);
-  if (st.ok) return { created: false, exists: true, status: st.status, data: st.data };
-
-  // 3) Criar se habilitado
-  if (!autoCreate) return { created: false, exists: false, status: 404, data: { error: "INSTANCE_NOT_FOUND" } };
-  const cr = await createInstance(instanceName);
-  if (cr.ok || cr.status === 201 || cr.status === 200 || cr.status === 409 /* já existe */) {
-    return { created: cr.status !== 409, exists: true, status: cr.status, data: cr.data };
+  const st = await getStatus(name).catch(() => null);
+  if (st?.ok) return { exists: true, created: false, data: st.data };
+  if (!autoCreate) return { exists: false, created: false };
+  const cr = await createInstance(name);
+  if (cr.ok || cr.status === 201 || cr.status === 409) {
+    return { exists: true, created: cr.status !== 409, data: cr.data };
   }
-  return { created: false, exists: false, status: cr.status, data: cr.data };
+  return { exists: false, created: false, error: cr.data };
 }

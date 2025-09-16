@@ -1,17 +1,22 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureInstance, getQr, listInstances, connectInstance, getStatus, normalizeQr } from "../_shared/evolution.ts";
+import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay } from "../_shared/evolution.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const PREFIX = Deno.env.get("EVOLUTION_INSTANCE_PREFIX") ?? "evo_line_";
 const AUTO = (Deno.env.get("EVOLUTION_AUTO_CREATE_INSTANCES") ?? "true").toLowerCase() === "true";
-const POLL_MS = Number(Deno.env.get("EVOLUTION_QR_POLL_MS") ?? 1500);
-const POLL_TIMEOUT = Number(Deno.env.get("EVOLUTION_QR_POLL_TIMEOUT_MS") ?? 120000);
+const POLL_MS = Number(Deno.env.get("EVOLUTION_QR_POLL_MS") ?? 1000);
+const POLL_TIMEOUT = Number(Deno.env.get("EVOLUTION_QR_POLL_TIMEOUT_MS") ?? 90000);
 
-function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function instanceNameFor(lineId: string | number, custom?: string) {
+  const s = (custom ?? "").trim();
+  return s ? s : `${PREFIX}${lineId}`;
+}
+
+function j(origin: string | null | undefined, body: any) {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type":"application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
 }
 
 const CORS = {
@@ -642,21 +647,17 @@ serve(async (req) => {
 
   // NEW: Robust connect whatsapp with QR polling
   if (action === "connect_whatsapp") {
+    const origin = req.headers.get("origin");
     try {
-      const origin = req.headers.get("origin");
       const { lineId, instanceName } = body ?? {};
-      const name = instanceNameFor(lineId ?? "1", instanceName);
+      const line = lineId ?? "1";
+      const name = instanceNameFor(line, instanceName);
 
-      // 1) Garantir/criar instância
       const ensured = await ensureInstance(name, AUTO);
-      if (!ensured.exists) return new Response(JSON.stringify({
-        success: false, ok: false, code: "INSTANCE_NOT_FOUND", status: 404, instanceName: name, lineId
-      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+      if (!ensured.exists) return j(origin, { success:false, ok:false, code:"INSTANCE_NOT_FOUND", error:"Instância não encontrada", instanceName:name, line });
 
-      // 2) Forçar CONNECT (gera QR no servidor)
       await connectInstance(name).catch(() => null);
 
-      // 3) Polling do QR até aparecer (ou já conectado)
       const startedAt = Date.now();
       let qrB64: string | null = null;
       let status: any = null;
@@ -667,43 +668,32 @@ serve(async (req) => {
         if (qr?.data) qrB64 = normalizeQr(qr.data);
         if (qrB64) break;
 
-        // se já estiver conectado, interrompe
-        const state = (status?.state || status?.status || "").toString().toLowerCase();
-        if (["connected","open","ready","online"].includes(state)) break;
+        const s = (status?.state || status?.status || "").toString().toLowerCase();
+        if (["connected","open","ready","online"].includes(s)) break;
 
         await delay(POLL_MS);
       }
 
-      return new Response(JSON.stringify({
-        success: true, ok: true, line: String(lineId ?? "1"),
-        instanceName: name,
-        status,
-        qr_base64: qrB64 ?? null
-      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
-    } catch (e: any) {
-      const origin = req.headers.get("origin");
-      return new Response(JSON.stringify({
-        success: false, ok: false, code: "ERROR", message: e.message || "Unknown error"
-      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+      return j(origin, { success:true, ok:true, data:{ instanceName:name, line:String(line), status, qr_base64: qrB64 ?? null }});
+    } catch (e:any) {
+      return j(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error", detail: e?.stack || null });
     }
   }
 
   // NEW: Get QR code with retry
   if (action === "get_qr") {
+    const origin = req.headers.get("origin");
     try {
-      const origin = req.headers.get("origin");
       const { instanceName, lineId } = body ?? {};
       const name = instanceNameFor(lineId ?? "1", instanceName);
       const qr = await getQr(name).catch(() => null);
       const st = await getStatus(name).catch(() => null);
       const base64 = qr?.data ? normalizeQr(qr.data) : null;
-      return new Response(JSON.stringify({
-        success: true, ok: true, instanceName: name,
-        status: st?.data ?? null, qr_base64: base64
-      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
-    } catch (e: any) {
-      const origin = req.headers.get("origin");
-      return new Response(JSON.stringify({
+      return j(origin, { success:true, ok:true, data:{ instanceName:name, status: st?.data ?? null, qr_base64: base64 }});
+    } catch (e:any) {
+      return j(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error" });
+    }
+  }
         success: false, ok: false, code: "ERROR", message: e.message || "Unknown error"
       }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
     }
@@ -727,9 +717,10 @@ serve(async (req) => {
 
   // NEW: Bind OpenLine ↔ Evolution instance
   if (action === "bind_openline") {
+    const origin = req.headers.get("origin");
     try {
       const { lineId, instanceName } = body ?? {};
-      if (!lineId || !instanceName) return ko("INVALID_PAYLOAD", { status: 422 });
+      if (!lineId || !instanceName) return j(origin, { success:false, ok:false, code:"INVALID_PAYLOAD", error:"lineId e instanceName são obrigatórios" });
 
       // upsert no Supabase
       const { data, error } = await service.from("evo_line_bindings").upsert({
@@ -738,10 +729,10 @@ serve(async (req) => {
         updated_at: new Date().toISOString(),
       }, { onConflict: "line_id" }).select().single();
 
-      if (error) return ko("DB_UPSERT_FAILED", { status: 500, detail: error.message });
-      return ok({ message: "Vinculado", binding: data });
+      if (error) return j(origin, { success:false, ok:false, code:"DB_UPSERT_FAILED", error: error.message });
+      return j(origin, { success:true, ok:true, data:{ message: "Vinculado", lineId, instanceName, binding: data }});
     } catch (e: any) {
-      return ko("DB_ERROR", { status: 500, detail: String(e?.message || e) });
+      return j(origin, { success:false, ok:false, code:"DB_ERROR", error: e?.message || String(e) });
     }
   }
 
