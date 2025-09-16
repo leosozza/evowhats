@@ -634,6 +634,91 @@ serve(async (req) => {
     }
   }
 
+  // NEW: Robust connect whatsapp with QR polling
+  if (action === "connect_whatsapp") {
+    try {
+      const origin = req.headers.get("origin");
+      const { lineId, instanceName } = body ?? {};
+      const name = instName(lineId ?? "1", instanceName);
+
+      // 1) Garantir/criar instância
+      const ensured = await ensureInstance(name, AUTO);
+      if (!ensured.exists) return new Response(JSON.stringify({
+        success: false, ok: false, code: "INSTANCE_NOT_FOUND", status: 404, instanceName: name, lineId
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+
+      // 2) Forçar CONNECT (gera QR no servidor)
+      await connectInstance(name).catch(() => null);
+
+      // 3) Polling do QR até aparecer (ou já conectado)
+      const startedAt = Date.now();
+      let qrB64: string | null = null;
+      let status: any = null;
+
+      while (Date.now() - startedAt < POLL_TIMEOUT) {
+        const [qr, st] = await Promise.all([getQr(name), getStatus(name)]).catch(() => [null, null]);
+        status = st?.data ?? null;
+        if (qr?.data) qrB64 = normalizeQr(qr.data);
+        if (qrB64) break;
+
+        // se já estiver conectado, interrompe
+        const state = (status?.state || status?.status || "").toString().toLowerCase();
+        if (["connected","open","ready","online"].includes(state)) break;
+
+        await delay(POLL_MS);
+      }
+
+      return new Response(JSON.stringify({
+        success: true, ok: true, line: String(lineId ?? "1"),
+        instanceName: name,
+        status,
+        qr_base64: qrB64 ?? null
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+    } catch (e: any) {
+      const origin = req.headers.get("origin");
+      return new Response(JSON.stringify({
+        success: false, ok: false, code: "ERROR", message: e.message || "Unknown error"
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+    }
+  }
+
+  // NEW: Get QR code with retry
+  if (action === "get_qr") {
+    try {
+      const origin = req.headers.get("origin");
+      const { instanceName, lineId } = body ?? {};
+      const name = instName(lineId ?? "1", instanceName);
+      const qr = await getQr(name).catch(() => null);
+      const st = await getStatus(name).catch(() => null);
+      const base64 = qr?.data ? normalizeQr(qr.data) : null;
+      return new Response(JSON.stringify({
+        success: true, ok: true, instanceName: name,
+        status: st?.data ?? null, qr_base64: base64
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+    } catch (e: any) {
+      const origin = req.headers.get("origin");
+      return new Response(JSON.stringify({
+        success: false, ok: false, code: "ERROR", message: e.message || "Unknown error"
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+    }
+  }
+
+  // Enhanced diagnostics with Evolution instances
+  if (action === "diag_evolution") {
+    try {
+      const origin = req.headers.get("origin");
+      const r = await listInstances();
+      return new Response(JSON.stringify({
+        success: true, ok: true, instances: r.data ?? [], status: r.status
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+    } catch (e: any) {
+      const origin = req.headers.get("origin");
+      return new Response(JSON.stringify({
+        success: false, ok: false, code: "ERROR", message: e.message || "Unknown error"
+      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
+    }
+  }
+
   // NEW: Bind OpenLine ↔ Evolution instance
   if (action === "bind_openline") {
     try {
@@ -659,6 +744,7 @@ serve(async (req) => {
     availableActions: [
       "diag", "diag_evolution", "list_instances", "proxy", "ensure_line_session", "start_session_for_line", 
       "get_qr_for_line", "get_status_for_line", "test_send", "bind_line", "bind_openline",
+      "connect_whatsapp", "get_qr",
       "instance.createOrAttach", "instance.status", "instance.qr", "send_message"
     ]
   });

@@ -19,8 +19,12 @@ import {
   Link as LinkIcon
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useEvolutionQr } from "@/hooks/useEvolutionQr";
+import { Transport } from "@/core/transport";
+import { Evolution } from "@/services/evolution";
 import { bitrixManager } from "@/services/bitrixManager";
 import { evolutionClient } from "@/services/evolutionClient";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ConnectBitrixButton from "@/components/bitrix/ConnectBitrixButton";
 import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
 
@@ -55,6 +59,7 @@ interface WizardState {
 export function Wizard() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
   const [state, setState] = useState<WizardState>({
     currentStep: 1,
     bitrix: {
@@ -76,6 +81,39 @@ export function Wizard() {
       tested: false,
     },
   });
+
+  // Evolution QR polling hook - use line ID if available
+  const instanceName = state.connector.lineId ? `evo_line_${state.connector.lineId}` : "evo_line_1";
+  const { qr, status: qrStatus, running, start, stop } = useEvolutionQr(
+    async (action: string, payload: any) => {
+      const result = await evolutionClient.request({ action, ...payload });
+      return result.success ? result.data : null;
+    },
+    instanceName
+  );
+
+  // Monitor QR status and handle connection changes
+  useEffect(() => {
+    if (qrStatus) {
+      const stateStr = (qrStatus?.state || qrStatus?.status || "").toString().toLowerCase();
+      if (["connected", "open", "ready", "online"].includes(stateStr)) {
+        setState(prev => ({
+          ...prev,
+          evolution: {
+            ...prev.evolution,
+            status: "connected",
+            connected: true,
+          },
+        }));
+        setShowQrModal(false);
+        stop();
+        toast({
+          title: "WhatsApp conectado!",
+          description: "Instância Evolution conectada com sucesso",
+        });
+      }
+    }
+  }, [qrStatus, stop, toast]);
 
   // Check initial Bitrix connection status
   useEffect(() => {
@@ -244,7 +282,7 @@ export function Wizard() {
     }
   };
 
-  // Step 3: Connect Evolution
+  // Step 3: Connect Evolution with robust QR handling
   const handleEvolutionConnect = async () => {
     if (!state.connector.lineId) {
       toast({
@@ -255,109 +293,51 @@ export function Wizard() {
       return;
     }
 
-    setLoading(true);
+    setShowQrModal(true);
+    toast({
+      title: "Conectando",
+      description: "Instância pronta. Gerando QR...",
+    });
+
     try {
-      const instanceName = state.evolution.instanceName || `evo_${Date.now()}`;
-      
-      // Auto-create/ensure instance using lineId from Bitrix
-      const startResult = await evolutionClient.start(state.connector.lineId, undefined, instanceName);
-      
-      if (startResult.ok) {
+      const result = await evolutionClient.start(state.connector.lineId, undefined, instanceName);
+
+      if (result.success && result.data) {
         setState(prev => ({
           ...prev,
           evolution: {
             ...prev.evolution,
-            instanceId: startResult.instance,
-            instanceName: startResult.instance,
+            instanceName: instanceName,
             status: "connecting",
-            qrCode: startResult.base64 || startResult.qr || null,
-            created: startResult.created || false,
+            qrCode: result.data?.base64 || null,
           },
         }));
 
-        // Bind the OpenLine if instance was created or ensured
-        if (startResult.instance) {
-          try {
-            await evolutionClient.bindOpenLine(state.connector.lineId, startResult.instance);
-          } catch (bindError) {
-            console.warn("Failed to bind OpenLine:", bindError);
-          }
-        }
-
-        // QR code is already available from start response
-        if (startResult.base64 || startResult.qr) {
+        start(); // Start QR polling
+        
+        if (result.data?.base64) {
           toast({
-            title: startResult.created ? "Instância criada!" : "Instância conectada!",
-            description: "Escaneie o QR code para conectar o WhatsApp",
-          });
-        } else {
-          // Try to get QR code separately if not in start response
-          const qrResult = await evolutionClient.qr(state.connector.lineId);
-          if (qrResult.ok && (qrResult.base64 || qrResult.qr_base64)) {
-            setState(prev => ({
-              ...prev,
-              evolution: {
-                ...prev.evolution,
-                qrCode: qrResult.base64 || qrResult.qr_base64,
-              },
-            }));
-          }
-          toast({
-            title: startResult.created ? "Instância criada!" : "Instância conectada!",
+            title: "QR Gerado", 
             description: "Escaneie o QR code para conectar o WhatsApp",
           });
         }
-
-        // Poll for connection status
-        let attempts = 0;
-        const pollStatus = async () => {
-          if (attempts++ > 30) return; // Stop after 30 attempts (3 minutes)
-          
-          try {
-            const status = await evolutionClient.status(state.connector.lineId);
-            if (status.ok && (status.state === "open" || status.state === "connected")) {
-              setState(prev => ({
-                ...prev,
-                evolution: {
-                  ...prev.evolution,
-                  status: "connected",
-                  qrCode: null,
-                  connected: true,
-                },
-              }));
-
-              toast({
-                title: "WhatsApp conectado!",
-                description: "Instância Evolution conectada com sucesso",
-              });
-              setState(prev => ({ ...prev, step: 4 }));
-              return;
-            }
-          } catch (e) {
-            console.error("Status poll error:", e);
-          }
-          
-          setTimeout(pollStatus, 6000); // Poll every 6 seconds
-        };
-
       } else {
-        throw new Error(startResult.error || "Falha ao conectar Evolution");
+        throw new Error("Falha na conexão");
       }
     } catch (error) {
-      console.error("Evolution connect error:", error);
+      console.error("Erro ao conectar Evolution:", error);
       toast({
-        title: "Erro",
-        description: error instanceof Error ? error.message : "Erro ao conectar Evolution",
-        variant: "destructive",
+        title: "Erro na Conexão",
+        description: error instanceof Error ? error.message : "Falha ao conectar com WhatsApp",
+        variant: "destructive"
       });
-    } finally {
-      setLoading(false);
+      setShowQrModal(false);
     }
   };
 
   // Step 4: Create Binding and Test
   const handleBindingAndTest = async () => {
-    if (!state.connector.lineId || !state.evolution.instanceId) {
+    if (!state.connector.lineId || !state.evolution.instanceName) {
       toast({
         title: "Erro",
         description: "Linha do Bitrix ou instância Evolution não disponível",
@@ -368,40 +348,32 @@ export function Wizard() {
 
     setLoading(true);
     try {
-      // Create binding
-      await bitrixManager.bindLine({
-        line_id: state.connector.lineId,
-        wa_instance_id: state.evolution.instanceId,
-      });
+      // Create binding using evolutionClient
+      await evolutionClient.bindOpenLine(state.connector.lineId, state.evolution.instanceName);
 
       setState(prev => ({
         ...prev,
         binding: { ...prev.binding, completed: true },
       }));
 
-      // Test message sending
-      const lineId = state.connector.lineId;
-      let testResult = { ok: false };
-      
-      if (lineId) {
-        testResult = await evolutionClient.sendMessage(
-          lineId,
-          "5511999999999", // Test number
-          "Teste de integração EvoWhats ✅"
-        );
+      // Test message sending using evolutionClient
+      const testResult = await evolutionClient.testSend(
+        state.connector.lineId,
+        "5511999999999", // Test number
+        "Teste de integração EvoWhats ✅"
+      );
 
-        setState(prev => ({
-          ...prev,
-          binding: { ...prev.binding, tested: testResult.ok },
-        }));
-      }
+      setState(prev => ({
+        ...prev,
+        binding: { ...prev.binding, tested: testResult.success || false },
+      }));
 
       toast({
-        title: testResult.ok ? "Integração completa!" : "Binding criado",
-        description: testResult.ok 
+        title: testResult.success ? "Integração completa!" : "Binding criado",
+        description: testResult.success 
           ? "Integração configurada e testada com sucesso" 
           : "Binding criado. Teste de mensagem falhou.",
-        variant: testResult.ok ? "default" : "destructive",
+        variant: testResult.success ? "default" : "destructive",
       });
     } catch (error) {
       console.error("Binding error:", error);
@@ -709,6 +681,52 @@ export function Wizard() {
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </div>
+
+        {/* QR Modal */}
+        <Dialog open={showQrModal} onOpenChange={(open) => {
+          setShowQrModal(open);
+          if (!open) stop();
+        }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Conectar WhatsApp</DialogTitle>
+              <DialogDescription>
+                {qr ? "Escaneie o QR code com seu WhatsApp" : "Gerando QR code..."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col items-center space-y-4">
+              {qr ? (
+                <div className="flex flex-col items-center space-y-2">
+                  <img 
+                    src={`data:image/png;base64,${qr}`}
+                    alt="QR Code WhatsApp"
+                    className="w-64 h-64 border rounded"
+                  />
+                  <a
+                    href={`data:image/png;base64,${qr}`}
+                    download="qr-whatsapp.png"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    Baixar QR Code
+                  </a>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center space-y-2">
+                  <div className="w-64 h-64 border rounded flex items-center justify-center">
+                    {running ? (
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                    ) : (
+                      <p className="text-muted-foreground">Aguardando QR...</p>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {running ? "Gerando QR... aguarde" : "QR não disponível"}
+                  </p>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

@@ -105,5 +105,13 @@ export const Evolution = (T: Transport) => {
     bindOpenLine(lineId: string, instanceName: string): Promise<Result<EvoBindResponse>> {
       return post({ action: "bind_openline", lineId, instanceName });
     },
+
+    connectWhatsapp(lineId: string, instanceName?: string): Promise<Result<EvoStartResponse>> {
+      return post({ action: "connect_whatsapp", lineId, instanceName });
+    },
+
+    getQr(lineId: string, instanceName?: string): Promise<Result<EvoQrResponse>> {
+      return post({ action: "get_qr", lineId, instanceName });
+    },
   };
 };
