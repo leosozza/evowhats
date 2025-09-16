@@ -9,8 +9,8 @@ import { Settings, Save, CheckCircle, AlertTriangle } from "lucide-react";
 
 const BitrixSecretsConfig = () => {
   const { toast } = useToast();
-  const [clientId, setClientId] = useState("local.68a38075c42648.55738445");
-  const [clientSecret, setClientSecret] = useState("3PVY5qqXOrziVJErr9GOzfWrUk95AHM1LdYS84BF1zJIwpbKck");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [saved, setSaved] = useState(false);
 
   const handleSaveSecrets = async () => {
@@ -45,7 +45,7 @@ const BitrixSecretsConfig = () => {
             <AlertTriangle className="h-4 w-4 text-blue-600 mt-0.5" />
             <div className="text-sm text-blue-800">
               <p className="font-medium">Importante:</p>
-              <p>Configure estes valores no seu App Local do Bitrix24 antes de conectar.</p>
+              <p>Configure estes valores via Supabase Secrets no backend. Esta interface é apenas para orientação.</p>
             </div>
           </div>
         </div>
@@ -77,7 +77,7 @@ const BitrixSecretsConfig = () => {
             <div>
               <span className="font-medium">URL de Redirecionamento:</span>
               <code className="ml-2 bg-slate-100 px-2 py-1 rounded text-xs">
-                https://twqcybbjyhcokcrdfgkk.functions.supabase.co/bitrix-oauth-callback
+                {window.location.origin}/bitrix/callback
               </code>
             </div>
             <div>

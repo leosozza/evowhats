@@ -1,14 +1,14 @@
 
 import { supabase } from "@/integrations/supabase/client";
 
-const FUNCTIONS_BASE = "https://twqcybbjyhcokcrdfgkk.functions.supabase.co";
+import { API_CONFIG } from "@/config/api";
 
 /**
  * Retorna a URL do webhook público para configurar no Open Channels no Bitrix24.
  * É a mesma para todos os usuários; o app detecta o usuário via portal_url no payload.
  */
 export function getOpenLinesWebhookUrl() {
-  return `${FUNCTIONS_BASE}/bitrix-openlines-webhook`;
+  return `${API_CONFIG.baseUrl}/bitrix-openlines-webhook`;
 }
 
 export type BitrixChannel = {

@@ -15,26 +15,27 @@ const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") || "*")
 const CONNECTOR_ID = "evolution_whatsapp";
 
 function cors(origin?: string | null) {
-  const allowed = origin && (ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.includes(origin)) ? origin : "";
+  const allowed = origin && (ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.includes(origin)) ? origin : ALLOWED_ORIGINS[0] || "*";
   return {
-    "Access-Control-Allow-Origin": allowed || (ALLOWED_ORIGINS[0] || "*"),
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-corr-id",
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-corr-id, x-evolution-signature, x-signature",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    Vary: "Origin",
+    "Content-Type": "application/json; charset=utf-8",
+    "Vary": "Origin",
   } as Record<string, string>;
 }
 
 function ok(data: any, status = 200, origin?: string | null) {
   return new Response(JSON.stringify({ success: true, ok: true, ...data }), {
-    status,
-    headers: { ...cors(origin), "Content-Type": "application/json" },
+    status: 200, // Always return 200 to avoid generic Supabase errors
+    headers: { ...cors(origin) },
   });
 }
 
 function ko(status: number, error: any, origin?: string | null) {
-  return new Response(JSON.stringify({ success: false, ok: false, error }), {
-    status,
-    headers: { ...cors(origin), "Content-Type": "application/json" },
+  return new Response(JSON.stringify({ success: false, ok: false, error, statusCode: status }), {
+    status: 200, // Always return 200 to avoid generic Supabase errors
+    headers: { ...cors(origin) },
   });
 }
 

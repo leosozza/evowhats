@@ -29,13 +29,20 @@ export function getPortalFromIframe(): string | null {
   }
 }
 
+import { ENV } from "@/config/env";
+
 export function openBitrixPopup(onDone: (ok: boolean, reason?: string) => void) {
   const state = crypto.randomUUID();
   sessionStorage.setItem("bx_oauth_state", state);
 
-  const clientId = "local.676be862007c97.98291528";
+  const clientId = ENV.BITRIX_CLIENT_ID || "";
   const redirectUri = guessRedirectUri();
-  const scope = "imopenlines imconnector im placement crm user";
+  const scope = ENV.BITRIX_SCOPE;
+
+  if (!clientId) {
+    onDone(false, "BITRIX_CLIENT_ID não configurado");
+    return;
+  }
 
   const url = buildBitrixAuthUrl({ clientId, redirectUri, scope, state });
   const w = window.open(url, "bx_oauth", "width=520,height=760");

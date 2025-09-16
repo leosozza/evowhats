@@ -7,18 +7,24 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-corr-id, x-evolution-signature, x-signature",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+  "Content-Type": "application/json; charset=utf-8",
 };
 
-function ok(data: any) { return new Response(JSON.stringify({ success: true, ok: true, ...data }), { headers: CORS }); }
+function ok(data: any) { 
+  return new Response(JSON.stringify({ success: true, ok: true, ...data }), { 
+    status: 200, 
+    headers: CORS 
+  }); 
+}
 function ko(error: string, extra?: any) {
-  const status = extra?.status || 
+  const statusCode = extra?.status || 
     (error === "UNAUTHORIZED" ? 401 : 
      error === "INSTANCE_NOT_FOUND" ? 404 : 
      error === "CONFIG_MISSING" ? 422 : 400);
-  return new Response(JSON.stringify({ success: false, ok: false, error, code: error, ...extra }), {
-    status,
+  return new Response(JSON.stringify({ success: false, ok: false, error, code: error, statusCode, ...extra }), {
+    status: 200, // Always return 200 to avoid generic Supabase errors
     headers: CORS,
   });
 }
@@ -197,8 +203,8 @@ function mapEvolutionError(error: any, action: string): { code: string; message:
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-  if (req.method !== "POST") return ko("Method not allowed");
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+  if (req.method !== "POST") return new Response(JSON.stringify({ ok: false, error: "method_not_allowed", statusCode: 405 }), { status: 200, headers: CORS });
 
   const service = svc();
   let user;
