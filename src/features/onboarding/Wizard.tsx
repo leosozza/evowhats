@@ -27,6 +27,7 @@ import { evolutionClient } from "@/services/evolutionClient";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ConnectBitrixButton from "@/components/bitrix/ConnectBitrixButton";
 import { getBitrixAuthStatus } from "@/services/bitrixAuthStatus";
+import type { EvoResponse, EvoConnectData } from "@/types/evolution";
 
 type WizardStep = 1 | 2 | 3 | 4;
 
@@ -86,8 +87,7 @@ export function Wizard() {
   const instanceName = state.connector.lineId ? `evo_line_${state.connector.lineId}` : "evo_line_1";
   const { qr, status: qrStatus, running, start, stop } = useEvolutionQr(
     async (action: string, payload: any) => {
-      const result = await evolutionClient.request({ action, ...payload });
-      return result.success ? result.data : null;
+      return await evolutionClient.getQr(state.connector.lineId || "1", instanceName);
     },
     instanceName
   );
@@ -300,29 +300,29 @@ export function Wizard() {
     });
 
     try {
-      const result = await evolutionClient.start(state.connector.lineId, undefined, instanceName);
+      const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
 
-      if (result.success && result.data) {
+      if (result.success) {
         setState(prev => ({
           ...prev,
           evolution: {
             ...prev.evolution,
             instanceName: instanceName,
             status: "connecting",
-            qrCode: result.data?.base64 || null,
+            qrCode: result.data?.qr_base64 || null,
           },
         }));
 
         start(); // Start QR polling
         
-        if (result.data?.base64) {
+        if (result.data?.qr_base64) {
           toast({
             title: "QR Gerado", 
             description: "Escaneie o QR code para conectar o WhatsApp",
           });
         }
       } else {
-        throw new Error("Falha na conexão");
+        throw new Error(result.error || "Falha na conexão");
       }
     } catch (error) {
       console.error("Erro ao conectar Evolution:", error);
