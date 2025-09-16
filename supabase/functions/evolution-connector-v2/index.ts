@@ -1,7 +1,9 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay } from "../_shared/evolution.ts";
+import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances } from "../_shared/evolution.ts";
+
+type EvoConfig = { baseUrl: string; apiKey: string };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -649,17 +651,20 @@ serve(async (req) => {
       const line = lineId ?? "1";
       const name = instanceNameFor(line, instanceName);
 
-      const ensured = await ensureInstance(name, AUTO);
+      // Get Evolution configuration from user settings or env
+      const evoConfig = await getEvoCfg(service, user.id);
+
+      const ensured = await ensureInstance(evoConfig, name, AUTO);
       if (!ensured.exists) return j(origin, { success:false, ok:false, code:"INSTANCE_NOT_FOUND", error:"Instância não encontrada", instanceName:name, line });
 
-      await connectInstance(name).catch(() => null);
+      await connectInstance(evoConfig, name).catch(() => null);
 
       const startedAt = Date.now();
       let qrB64: string | null = null;
       let status: any = null;
 
       while (Date.now() - startedAt < POLL_TIMEOUT) {
-        const [qr, st] = await Promise.all([getQr(name), getStatus(name)]).catch(() => [null, null]);
+        const [qr, st] = await Promise.all([getQr(evoConfig, name), getStatus(evoConfig, name)]).catch(() => [null, null]);
         status = st?.data ?? null;
         if (qr?.data) qrB64 = normalizeQr(qr.data);
         if (qrB64) break;
@@ -682,8 +687,12 @@ serve(async (req) => {
     try {
       const { instanceName, lineId } = body ?? {};
       const name = instanceNameFor(lineId ?? "1", instanceName);
-      const qr = await getQr(name).catch(() => null);
-      const st = await getStatus(name).catch(() => null);
+      
+      // Get Evolution configuration from user settings or env
+      const evoConfig = await getEvoCfg(service, user.id);
+      
+      const qr = await getQr(evoConfig, name).catch(() => null);
+      const st = await getStatus(evoConfig, name).catch(() => null);
       const base64 = qr?.data ? normalizeQr(qr.data) : null;
       return j(origin, { success:true, ok:true, data:{ instanceName:name, status: st?.data ?? null, qr_base64: base64 }});
     } catch (e:any) {
