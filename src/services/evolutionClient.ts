@@ -1,28 +1,66 @@
 import { API_CONFIG } from "@/config/api";
+import { supabase } from "@/integrations/supabase/client";
+import { ENV } from "@/config/env";
 import type { EvoResponse, EvoConnectData, EvoQrData, EvoDiagnosticsData } from "@/types/evolution";
 
 type Body = Record<string, any>;
 
-async function postRaw(body: Body): Promise<any> {
-  const res = await fetch(`${API_CONFIG.baseUrl}/evolution-connector-v2`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  try { return await res.json(); } catch { return {}; }
-}
-
-/** Normaliza respostas: se vierem campos no topo (success/ok/qr_base64 etc.),
- * embrulha em { success, ok, data: { ...rest } } para padronizar o consumo. */
+// Normaliza respostas: se não vier "data", embrulha o resto em data
 function normalize<T = any>(raw: any): EvoResponse<T> {
   if (raw && typeof raw === "object" && "data" in raw) return raw as EvoResponse<T>;
   const { success = true, ok = true, error, message, code, ...rest } = raw || {};
   return { success: !!success, ok: !!ok, error, message, code, data: rest as T };
 }
 
-async function post<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
-  const json = await postRaw({ action, ...body });
+// 1) Preferir supabase.functions.invoke (leva JWT automaticamente)
+async function invoke<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
+  console.log(`[evolutionClient] Invoking ${action} with body:`, body);
+  const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+    body: { action, ...body },
+  });
+  
+  if (error) {
+    console.error(`[evolutionClient] Invoke error for ${action}:`, error);
+    return { success: false, ok: false, error: error.message, code: error.name };
+  }
+  
+  console.log(`[evolutionClient] Invoke success for ${action}:`, data);
+  return normalize<T>(data);
+}
+
+// 2) Fallback (se precisar atingir URL direta), incluindo Authorization e apikey
+async function fetchDirect<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
+  console.log(`[evolutionClient] Using fetchDirect for ${action}`);
+  const { data: s } = await supabase.auth.getSession();
+  const token = s?.session?.access_token;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "apikey": ENV.SUPABASE_PUBLISHABLE_KEY,
+    "Authorization": `Bearer ${token ?? ENV.SUPABASE_PUBLISHABLE_KEY}`,
+  };
+  
+  console.log(`[evolutionClient] Headers for ${action}:`, { ...headers, Authorization: token ? "Bearer [TOKEN]" : "Bearer [ANON_KEY]" });
+  
+  const res = await fetch(`${API_CONFIG.baseUrl}/evolution-connector-v2`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ action, ...body }),
+  });
+  
+  console.log(`[evolutionClient] Response status for ${action}:`, res.status);
+  const json = await res.json().catch(() => ({}));
+  console.log(`[evolutionClient] Response data for ${action}:`, json);
   return normalize<T>(json);
+}
+
+async function post<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
+  try {
+    // tente via invoke (JWT do usuário). Se falhar por CORS local, usa fallback:
+    return await invoke<T>(action, body);
+  } catch (error) {
+    console.warn(`[evolutionClient] Invoke failed for ${action}, trying fetchDirect:`, error);
+    return await fetchDirect<T>(action, body);
+  }
 }
 
 export const evolutionClient = {
