@@ -694,10 +694,6 @@ serve(async (req) => {
       return j(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error" });
     }
   }
-        success: false, ok: false, code: "ERROR", message: e.message || "Unknown error"
-      }), { status: 200, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": origin ?? "*" }});
-    }
-  }
 
   // Enhanced diagnostics with Evolution instances
   if (action === "diag_evolution") {
