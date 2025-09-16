@@ -12,31 +12,50 @@ function normalize<T = any>(raw: any): EvoResponse<T> {
 }
 
 async function invoke<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
+  // eslint-disable-next-line no-console
+  console.log("[evolutionClient] Invoking", action, "with body:", body);
   const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
     body: { action, ...body },
   });
   if (error) {
-    console.error("[evolutionClient] invoke error:", error);
+    // eslint-disable-next-line no-console
+    console.warn("[evolutionClient] Invoke error:", error);
     return { success: false, ok: false, error: error.message, code: error.name };
   }
+  // eslint-disable-next-line no-console
+  console.log("[evolutionClient] Invoke success for", action, ":", data);
   return normalize<T>(data);
 }
 
 async function fetchDirect<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
   const { data: s } = await supabase.auth.getSession();
   const token = s?.session?.access_token;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "apikey": ENV.SUPABASE_PUBLISHABLE_KEY,
-    "Authorization": token ? `Bearer ${token}` : `Bearer ${ENV.SUPABASE_PUBLISHABLE_KEY}`,
-  };
+
+  if (!API_CONFIG.baseUrl) {
+    return {
+      success: false,
+      ok: false,
+      code: "FUNCTIONS_URL_MISSING",
+      error: "API_CONFIG.baseUrl está vazio. Configure VITE_FUNCTIONS_BASE_URL ou VITE_SUPABASE_URL.",
+    };
+  }
+
   const res = await fetch(`${API_CONFIG.baseUrl}/evolution-connector-v2`, {
     method: "POST",
-    headers,
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": ENV.SUPABASE_PUBLISHABLE_KEY,
+      "Authorization": `Bearer ${token ?? ENV.SUPABASE_PUBLISHABLE_KEY}`,
+    },
     body: JSON.stringify({ action, ...body }),
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) console.error("[evolutionClient] fetchDirect http", res.status, json);
+
+  let json: any = {};
+  try { json = await res.json(); } catch {}
+  if (!res.ok) {
+    // eslint-disable-next-line no-console
+    console.warn("[evolutionClient] fetchDirect http", res.status, json);
+  }
   return normalize<T>(json);
 }
 

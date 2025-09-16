@@ -281,9 +281,15 @@ export function Wizard() {
     try {
       const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
       if (!result.success) {
+        // Mostra erro real ao usuário
+        const detail = result.error || result.message || JSON.stringify(result, null, 2);
         console.error("[connectWhatsapp] fail:", result);
+        toast({
+          title: result.code || "Falha na conexão",
+          description: detail,
+          variant: "destructive",
+        });
         setShowQrModal(false);
-        toast({ title: result.code || "Falha na conexão", description: result.error || result.message || "Verifique Evolution API.", variant: "destructive" });
         return;
       }
       setState(prev => ({ ...prev, evolution: { ...prev.evolution, instanceName, status: "connecting", qrCode: result.data?.qr_base64 ?? null } }));
@@ -557,6 +563,26 @@ export function Wizard() {
                 >
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {state.evolution.connected ? "Reconectar" : "Conectar WhatsApp"}
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      const diag = await evolutionClient.diag();
+                      console.log("[evolution diag]", diag);
+                      const env = (diag?.data && (diag as any).data.env) || (diag as any).env; // compat
+                      const msg = env
+                        ? `EVOLUTION_BASE_URL: ${env.base_set ? "OK" : "FALTANDO"} | API_KEY: ${env.key_set ? "OK" : "FALTANDO"}`
+                        : JSON.stringify(diag);
+                      toast({ title: "Diagnóstico Evolution", description: msg });
+                    } catch (e: any) {
+                      toast({ title: "Diag falhou", description: e?.message || String(e), variant: "destructive" });
+                    }
+                  }}
+                  className="w-full"
+                >
+                  Diagnóstico Evolution
                 </Button>
               </CardContent>
             </Card>
