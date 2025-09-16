@@ -246,12 +246,21 @@ export function Wizard() {
 
   // Step 3: Connect Evolution
   const handleEvolutionConnect = async () => {
+    if (!state.connector.lineId) {
+      toast({
+        title: "Erro",
+        description: "Configure o conector Bitrix primeiro",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const instanceName = state.evolution.instanceName || `evo_${Date.now()}`;
       
-      // Create or get instance
-      const createResult = await evolutionClient.createInstance(instanceName);
+      // Create or get instance using lineId from Bitrix
+      const createResult = await evolutionClient.createInstance(state.connector.lineId);
       
       if (createResult.ok) {
         setState(prev => ({
@@ -264,8 +273,8 @@ export function Wizard() {
           },
         }));
 
-        // Get QR code
-        const qrResult = await evolutionClient.getQRCode(instanceName);
+        // Get QR code using lineId
+        const qrResult = await evolutionClient.getQRCode(state.connector.lineId);
         if (qrResult.ok && qrResult.qrCode) {
           setState(prev => ({
             ...prev,
@@ -282,7 +291,7 @@ export function Wizard() {
           if (attempts++ > 30) return; // Stop after 30 attempts (3 minutes)
           
           try {
-            const status = await evolutionClient.getStatus(instanceName);
+            const status = await evolutionClient.getStatus(state.connector.lineId);
             if (status.ok) {
               setState(prev => ({
                 ...prev,
