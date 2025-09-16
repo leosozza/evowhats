@@ -5,13 +5,14 @@ export const ENV = {
   FUNCTIONS_BASE_URL:
     (import.meta.env.VITE_FUNCTIONS_BASE_URL as string) ||
     (() => {
-      // Deriva https://<ref>.functions.supabase.co
+      // Deriva https://<ref>.functions.supabase.co/functions/v1 (correto)
       const url = (import.meta.env.VITE_SUPABASE_URL as string) || "";
       try {
         const u = new URL(url);
-        return u.origin.replace(".supabase.co", ".functions.supabase.co") + "/functions/v1";
+        const ref = u.hostname.split('.')[0]; // extrai ref do projeto
+        return `https://${ref}.functions.supabase.co/functions/v1`;
       } catch {
-        return "https://your-project.functions.supabase.co/functions/v1";
+        return "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/functions/v1";
       }
     })(),
   BITRIX_CLIENT_ID: import.meta.env.VITE_BITRIX_CLIENT_ID as string | undefined,

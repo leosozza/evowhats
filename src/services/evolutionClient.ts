@@ -38,32 +38,52 @@ async function invoke<T = any>(action: string, body: Body): Promise<EvoResponse<
 async function fetchDirect<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
   const { data: s } = await supabase.auth.getSession();
   const token = s?.session?.access_token;
-  if (!API_CONFIG.baseUrl) {
-    return { success:false, ok:false, code:"FUNCTIONS_URL_MISSING", error:"Configure VITE_FUNCTIONS_BASE_URL ou VITE_SUPABASE_URL." };
+  if (!ENV.FUNCTIONS_BASE_URL) {
+    return { success:false, ok:false, code:"FUNCTIONS_URL_MISSING", error:"Configure VITE_FUNCTIONS_BASE_URL." };
   }
-  const res = await fetch(`${API_CONFIG.baseUrl}/evolution-connector-v2`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": ENV.SUPABASE_PUBLISHABLE_KEY,
-      "Authorization": `Bearer ${token ?? ENV.SUPABASE_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify({ action, ...body }),
-  });
-  let json: any = {};
-  try { json = await res.json(); } catch {}
-  if (!res.ok) console.warn("[evolutionClient] fetchDirect http", res.status, json);
-  console.log("[evolutionClient] fetchDirect raw:", json);
-  return normalize<T>(json);
+  
+  try {
+    const res = await fetch(`${ENV.FUNCTIONS_BASE_URL}/evolution-connector-v2`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": ENV.SUPABASE_PUBLISHABLE_KEY,
+        "Authorization": `Bearer ${token ?? ENV.SUPABASE_PUBLISHABLE_KEY}`,
+      },
+      body: JSON.stringify({ action, ...body }),
+    });
+    let json: any = {};
+    try { json = await res.json(); } catch {}
+    if (!res.ok) console.warn("[evolutionClient] fetchDirect http", res.status, json);
+    console.log("[evolutionClient] fetchDirect raw:", json);
+    return normalize<T>(json);
+  } catch (error: any) {
+    console.error("[evolutionClient] fetchDirect failed:", error);
+    return { success: false, ok: false, code: "FETCH_DIRECT_ERROR", error: error.message };
+  }
 }
 
 async function post<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
-  const r = await invoke<T>(action, body);
-  if (!r.success && r.code === "INVOKE_TRANSPORT_ERROR") {
-    console.warn("[evolutionClient] falling back to fetchDirect:", action);
+  try {
+    const r = await invoke<T>(action, body);
+    
+    // Se invoke retornou dados válidos (mesmo com success: false), não faz fallback
+    // Fallback só para erros de transporte/CORS
+    if (r && typeof r === 'object' && ('success' in r || 'ok' in r || 'data' in r)) {
+      // Se é erro de transporte específico, tenta fallback
+      if (r.code === "INVOKE_TRANSPORT_ERROR") {
+        console.warn("[evolutionClient] Transport error, trying fallback:", action);
+        return await fetchDirect<T>(action, body);
+      }
+      return r; // Retorna resposta válida do backend (mesmo que seja erro)
+    }
+    
+    console.warn("[evolutionClient] Invalid response format, trying fallback:", r);
     return await fetchDirect<T>(action, body);
+  } catch (error: any) {
+    console.error("[evolutionClient] Unexpected error:", error);
+    return { success: false, ok: false, code: "CLIENT_ERROR", error: error.message };
   }
-  return r; // erro válido do backend → retorna sem fallback
 }
 
 export const evolutionClient = {
@@ -76,7 +96,6 @@ export const evolutionClient = {
   bindOpenLine(lineId: string | number, instanceName: string) {
     return post("bind_openline", { lineId, instanceName });
   },
-  // nome padronizado: usar "test_send"
   testSend(lineId: string | number, to: string, text: string) {
     return post("test_send", { lineId, to, text });
   },
@@ -87,9 +106,17 @@ export const evolutionClient = {
     return post<EvoDiagnosticsData>("diag_evolution_full", {});
   },
   listInstances() {
-    return post<EvoDiagnosticsData>("diag_evolution_full", {});
+    return post<EvoDiagnosticsData>("diag_instances", {}); // Corrigido para usar diag_instances
   },
   diagInstances() {
     return post("diag_instances", {});
   },
+  diagDiscovery() {
+    return post("diag_discovery", {});
+  },
+  resetDiscovery() {
+    return post("diag_reset_discovery", {});
+  },
+  // Método genérico para calls customizados
+  post: post,
 };

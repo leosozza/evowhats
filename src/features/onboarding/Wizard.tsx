@@ -281,21 +281,42 @@ export function Wizard() {
     toast({ title: "Conectando", description: "Instância pronta. Gerando QR..." });
     try {
       const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
-    if (!result.success) {
-      const trace  = (result as any).data?.trace;
-      const reason = (result as any).data?.reason;
-      const detail = result.error || result.message || (reason ? JSON.stringify(reason) : JSON.stringify(result));
-      console.error("[connectWhatsapp] fail object:", result);
-      if (trace) {
-        console.groupCollapsed("[connectWhatsapp] trace");
-        console.log(trace);
-        console.groupEnd?.();
-      }
-      console.error("[connectWhatsapp] fail string:", detail);
-      toast({ title: result.code || "Falha na conexão", description: detail, variant: "destructive" });
-      setShowQrModal(false);
-      return;
-    }
+        if (!result.success) {
+          const trace  = (result as any).data?.trace;
+          const reason = (result as any).data?.reason;
+          const code   = result.code || "EVOLUTION_ERROR";
+          
+          // Log detalhado para debug
+          console.error("[connectWhatsapp] Falha completa:", result);
+          if (trace) {
+            console.groupCollapsed("[connectWhatsapp] Trace detalhado");
+            console.log("Steps executados:", trace);
+            if (trace.list) console.log("List result:", trace.list);
+            if (trace.status) console.log("Status result:", trace.status);
+            if (trace.create) console.log("Create result:", trace.create);
+            if (trace.connect) console.log("Connect result:", trace.connect);
+            console.groupEnd?.();
+          }
+          if (reason) {
+            console.error("[connectWhatsapp] Reason bruto:", reason);
+          }
+          
+          // Mensagem de erro mais clara
+          let errorMsg = result.error || result.message || "Erro desconhecido";
+          if (code === "EVOLUTION_CONFIG_MISSING") {
+            errorMsg = "Configuração da Evolution API não encontrada. Verifique EVOLUTION_BASE_URL e EVOLUTION_API_KEY nos secrets.";
+          } else if (code === "EVOLUTION_CREATE_FAILED") {
+            errorMsg = `Falha ao criar instância: ${reason ? JSON.stringify(reason) : errorMsg}`;
+          }
+          
+          toast({ 
+            title: code, 
+            description: errorMsg, 
+            variant: "destructive" 
+          });
+          setShowQrModal(false);
+          return;
+        }
       setState(prev => ({ ...prev, evolution: { ...prev.evolution, instanceName, status: "connecting", qrCode: result.data?.qr_base64 ?? null } }));
       if (result.data?.qr_base64) toast({ title: "QR Gerado", description: "Escaneie o QR code para conectar o WhatsApp" });
       start(); // inicia polling
@@ -634,49 +655,53 @@ export function Wizard() {
                    </div>
 
                    <div className="grid grid-cols-2 gap-2">
-                     <Button
-                       variant="secondary"
-                       size="sm"
-                       onClick={async () => {
-                         try {
-                           const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
-                             body: { action: 'diag_discovery' }
-                           });
-                           console.log("[diag_discovery]", data);
-                           toast({ 
-                             title: "Discovery", 
-                             description: JSON.stringify(data?.data || data) 
-                           });
-                         } catch (e: any) {
-                           toast({
-                             title: "Discovery Error",
-                             description: e.message,
-                             variant: "destructive"
-                           });
-                         }
-                       }}
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const result = await evolutionClient.diagDiscovery();
+                            console.log("[diag_discovery]", result);
+                            const pathsMsg = result?.data?.paths ? 
+                              `Paths descobertos: ${JSON.stringify(result.data.paths)}` : 
+                              `Erro: ${result?.error || JSON.stringify(result)}`;
+                            toast({ 
+                              title: "Discovery Evolution", 
+                              description: pathsMsg,
+                              variant: result?.success ? "default" : "destructive"
+                            });
+                          } catch (e: any) {
+                            toast({
+                              title: "Discovery Error",
+                              description: e.message,
+                              variant: "destructive"
+                            });
+                          }
+                        }}
                      >
                        🔍 Discovery
                      </Button>
 
-                     <Button
-                       variant="secondary" 
-                       size="sm"
-                       onClick={async () => {
-                         try {
-                           const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
-                             body: { action: 'diag_reset_discovery' }
-                           });
-                           console.log("[diag_reset_discovery]", data);
-                           toast({ title: "Discovery resetado", description: "Cache limpo e paths redescobrertos" });
-                         } catch (e: any) {
-                           toast({
-                             title: "Reset Error",
-                             description: e.message,
-                             variant: "destructive"
-                           });
-                         }
-                       }}
+                      <Button
+                        variant="secondary" 
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const result = await evolutionClient.resetDiscovery();
+                            console.log("[diag_reset_discovery]", result);
+                            toast({ 
+                              title: "Discovery Resetado", 
+                              description: result?.success ? "Cache limpo, próxima operação redescobre paths" : `Erro: ${result?.error}`,
+                              variant: result?.success ? "default" : "destructive"
+                            });
+                          } catch (e: any) {
+                            toast({
+                              title: "Reset Error",
+                              description: e.message,
+                              variant: "destructive"
+                            });
+                          }
+                        }}
                      >
                        🔄 Reset
                      </Button>
