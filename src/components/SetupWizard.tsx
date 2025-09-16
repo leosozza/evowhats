@@ -129,7 +129,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
           evolution_base_url: evolutionConfig.baseUrl.replace(/\/+$/, ""),
           evolution_api_key: evolutionConfig.apiKey,
           is_active: true
-        }, { onConflict: "user_id" });
+        } as any, { onConflict: "user_id" });
 
       if (error) throw error;
       

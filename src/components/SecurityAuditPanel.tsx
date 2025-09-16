@@ -57,12 +57,12 @@ export function SecurityAuditPanel() {
 
       if (credsError) throw credsError;
 
-      setAuditLogs((logs || []).map(log => ({
+      setAuditLogs((logs || []).map((log: any) => ({
         ...log,
         ip_address: log.ip_address as string | null,
         user_agent: log.user_agent as string | null
       })));
-      setCredentials(creds || []);
+      setCredentials((creds as any) || []);
     } catch (error: any) {
       console.error('Error loading security data:', error);
       toast({

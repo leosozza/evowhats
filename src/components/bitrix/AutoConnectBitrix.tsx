@@ -134,7 +134,7 @@ const AutoConnectBitrix = () => {
           expires_at: expiresAt,
           is_active: true,
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id,portal_url' });
+        } as any, { onConflict: 'user_id,portal_url' });
 
       if (error) throw error;
       

@@ -47,7 +47,7 @@ export function useEvolutionRealTime() {
             contact_phone: contactNumber,
             evolution_instance: message.instanceName,
             last_message_at: message.timestamp
-          })
+          } as any)
           .select('id')
           .single();
 
@@ -55,31 +55,32 @@ export function useEvolutionRealTime() {
           console.error('Error creating conversation:', error);
           return;
         }
-        conversation = newConversation;
+        conversation = newConversation as any;
       }
 
       // Insert message
       await supabase
         .from('messages')
         .insert({
-          conversation_id: conversation.id,
+          conversation_id: (conversation as any).id,
           content: message.message,
           direction: message.isFromMe ? 'out' : 'in',
           message_type: message.messageType,
           evolution_message_id: message.messageId,
           status: 'delivered',
           created_at: message.timestamp
-        });
+        } as any);
 
       // Update conversation last message time
-      await supabase
+      const supabaseAny = supabase as any;
+      await supabaseAny
         .from('conversations')
         .update({ last_message_at: message.timestamp })
         .eq('id', conversation.id);
 
       // Invalidate queries to refresh UI
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      queryClient.invalidateQueries({ queryKey: ['messages', conversation.id] });
+      queryClient.invalidateQueries({ queryKey: ['messages', (conversation as any).id] });
 
     } catch (error) {
       console.error('Error saving message:', error);

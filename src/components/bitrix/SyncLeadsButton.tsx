@@ -44,8 +44,8 @@ const SyncLeadsButton = () => {
           .order('created_at', { ascending: false })
           .limit(1);
         
-        if (data && data[0]) {
-          setLastSync(new Date(data[0].created_at));
+        if (data && data[0] && (data[0] as any).created_at) {
+          setLastSync(new Date((data[0] as any).created_at));
         }
       }
     } catch (error) {
