@@ -25,12 +25,35 @@ export type EvoQrResponse = {
   line?: string;
   qr_base64?: string;
   base64?: string;
+  qr?: string;
 };
 
 export type EvoStatusResponse = {
   line?: string;
   state?: string;
   raw?: any;
+};
+
+export type EvoEnsureResponse = {
+  line: string;
+  instance: string;
+  exists: boolean;
+  created?: boolean;
+  message?: string;
+};
+
+export type EvoStartResponse = {
+  line: string;
+  base64?: string;
+  instance: string;
+  created?: boolean;
+  message?: string;
+  qr?: string;
+};
+
+export type EvoBindResponse = {
+  message: string;
+  binding: any;
 };
 
 export const Evolution = (T: Transport) => {
@@ -47,16 +70,20 @@ export const Evolution = (T: Transport) => {
       return post({ action: "diag" });
     },
 
+    diagEvolution(): Promise<Result<{ instances: EvoInstance[]; status: number }>> {
+      return post({ action: "diag_evolution" });
+    },
+
     list(): Promise<Result<{ instances: EvoInstance[] }>> {
       return post({ action: "list_instances" });
     },
 
-    ensure(lineId: string): Promise<Result<{ line: string; instance: string }>> {
-      return post({ action: "ensure_line_session", lineId });
+    ensure(lineId: string, instanceName?: string): Promise<Result<EvoEnsureResponse>> {
+      return post({ action: "ensure_line_session", lineId, instanceName });
     },
 
-    start(lineId: string, number?: string): Promise<Result<{ line: string; base64?: string }>> {
-      return post({ action: "start_session_for_line", lineId, number });
+    start(lineId: string, number?: string, instanceName?: string): Promise<Result<EvoStartResponse>> {
+      return post({ action: "start_session_for_line", lineId, number, instanceName });
     },
 
     status(lineId: string): Promise<Result<EvoStatusResponse>> {
@@ -73,6 +100,10 @@ export const Evolution = (T: Transport) => {
 
     bind(instanceId: string, lineId: string): Promise<Result<{ success: boolean }>> {
       return post({ action: "bind_line", instanceId, lineId });
+    },
+
+    bindOpenLine(lineId: string, instanceName: string): Promise<Result<EvoBindResponse>> {
+      return post({ action: "bind_openline", lineId, instanceName });
     },
   };
 };

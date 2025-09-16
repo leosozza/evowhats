@@ -259,30 +259,53 @@ export function Wizard() {
     try {
       const instanceName = state.evolution.instanceName || `evo_${Date.now()}`;
       
-      // Create or get instance using lineId from Bitrix
-      const createResult = await evolutionClient.createInstance(state.connector.lineId);
+      // Auto-create/ensure instance using lineId from Bitrix
+      const startResult = await evolutionClient.start(state.connector.lineId, undefined, instanceName);
       
-      if (createResult.ok) {
+      if (startResult.ok) {
         setState(prev => ({
           ...prev,
           evolution: {
             ...prev.evolution,
-            instanceId: createResult.instanceId,
-            instanceName,
+            instanceId: startResult.instance,
+            instanceName: startResult.instance,
             status: "connecting",
+            qrCode: startResult.base64 || startResult.qr || null,
+            created: startResult.created || false,
           },
         }));
 
-        // Get QR code using lineId
-        const qrResult = await evolutionClient.getQRCode(state.connector.lineId);
-        if (qrResult.ok && qrResult.qrCode) {
-          setState(prev => ({
-            ...prev,
-            evolution: {
-              ...prev.evolution,
-              qrCode: qrResult.qrCode,
-            },
-          }));
+        // Bind the OpenLine if instance was created or ensured
+        if (startResult.instance) {
+          try {
+            await evolutionClient.bindOpenLine(state.connector.lineId, startResult.instance);
+          } catch (bindError) {
+            console.warn("Failed to bind OpenLine:", bindError);
+          }
+        }
+
+        // QR code is already available from start response
+        if (startResult.base64 || startResult.qr) {
+          toast({
+            title: startResult.created ? "Instância criada!" : "Instância conectada!",
+            description: "Escaneie o QR code para conectar o WhatsApp",
+          });
+        } else {
+          // Try to get QR code separately if not in start response
+          const qrResult = await evolutionClient.qr(state.connector.lineId);
+          if (qrResult.ok && (qrResult.base64 || qrResult.qr_base64)) {
+            setState(prev => ({
+              ...prev,
+              evolution: {
+                ...prev.evolution,
+                qrCode: qrResult.base64 || qrResult.qr_base64,
+              },
+            }));
+          }
+          toast({
+            title: startResult.created ? "Instância criada!" : "Instância conectada!",
+            description: "Escaneie o QR code para conectar o WhatsApp",
+          });
         }
 
         // Poll for connection status
@@ -291,24 +314,24 @@ export function Wizard() {
           if (attempts++ > 30) return; // Stop after 30 attempts (3 minutes)
           
           try {
-            const status = await evolutionClient.getStatus(state.connector.lineId);
-            if (status.ok) {
+            const status = await evolutionClient.status(state.connector.lineId);
+            if (status.ok && (status.state === "open" || status.state === "connected")) {
               setState(prev => ({
                 ...prev,
                 evolution: {
                   ...prev.evolution,
-                  status: status.status || "unknown",
-                  connected: status.status === "connected" || status.status === "open",
+                  status: "connected",
+                  qrCode: null,
+                  connected: true,
                 },
               }));
 
-              if (status.status === "connected" || status.status === "open") {
-                toast({
-                  title: "WhatsApp conectado!",
-                  description: "Instância Evolution conectada com sucesso",
-                });
-                return;
-              }
+              toast({
+                title: "WhatsApp conectado!",
+                description: "Instância Evolution conectada com sucesso",
+              });
+              setState(prev => ({ ...prev, step: 4 }));
+              return;
             }
           } catch (e) {
             console.error("Status poll error:", e);
@@ -317,7 +340,8 @@ export function Wizard() {
           setTimeout(pollStatus, 6000); // Poll every 6 seconds
         };
 
-        setTimeout(pollStatus, 2000); // Start polling after 2 seconds
+      } else {
+        throw new Error(startResult.error || "Falha ao conectar Evolution");
       }
     } catch (error) {
       console.error("Evolution connect error:", error);

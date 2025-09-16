@@ -19,8 +19,15 @@ export interface EvolutionResponse {
   ok: boolean;
   error?: string;
   instanceId?: string;
+  instance?: string;
   status?: string;
+  state?: string;
   qrCode?: string;
+  base64?: string;
+  qr?: string;
+  qr_base64?: string;
+  created?: boolean;
+  message?: string;
   data?: any;
 }
 
@@ -153,6 +160,59 @@ class EvolutionClient {
     }
     
     return { ok: true, ...data };
+  }
+
+  async bindOpenLine(lineId: string, instanceName: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
+    const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+      body: {
+        action: "bind_openline",
+        lineId,
+        instanceName,
+      },
+      headers: { Authorization: `Bearer ${session.access_token}` }
+    });
+    
+    if (error) {
+      return { ok: false, error: error.message || "Falha ao vincular OpenLine" };
+    }
+    
+    return { ok: true, ...data };
+  }
+
+  async start(lineId: string, number?: string, instanceName?: string): Promise<EvolutionResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error("Usuário não autenticado");
+
+    const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
+      body: {
+        action: "start_session_for_line",
+        lineId,
+        number,
+        instanceName,
+      },
+      headers: { Authorization: `Bearer ${session.access_token}` }
+    });
+    
+    if (error) {
+      return { ok: false, error: error.message || "Falha ao iniciar sessão" };
+    }
+    
+    return { 
+      ok: true, 
+      qrCode: data?.base64 || data?.qr,
+      ...data 
+    };
+  }
+
+  async qr(lineId: string): Promise<EvolutionResponse> {
+    return this.getQRCode(lineId);
+  }
+
+  async status(lineId: string): Promise<EvolutionResponse> {
+    return this.getStatus(lineId);
   }
 
   async listInstances(): Promise<EvolutionResponse & { instances?: any[] }> {

@@ -307,6 +307,39 @@ export type Database = {
         }
         Relationships: []
       }
+      evo_line_bindings: {
+        Row: {
+          created_at: string | null
+          id: number
+          instance_name: string
+          last_error: string | null
+          last_qr: string | null
+          line_id: string
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: number
+          instance_name: string
+          last_error?: string | null
+          last_qr?: string | null
+          line_id: string
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: number
+          instance_name?: string
+          last_error?: string | null
+          last_qr?: string | null
+          line_id?: string
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       evolution_instances: {
         Row: {
           created_at: string

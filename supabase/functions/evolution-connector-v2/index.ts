@@ -1,9 +1,12 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ensureInstance, getQr, listInstances } from "../_shared/evolution.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const PREFIX = Deno.env.get("EVOLUTION_INSTANCE_PREFIX") ?? "evo_line_";
+const AUTO = (Deno.env.get("EVOLUTION_AUTO_CREATE_INSTANCES") ?? "true").toLowerCase() === "true";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -31,6 +34,11 @@ function ko(error: string, extra?: any) {
 
 function log(data: any) {
   console.log(`[evolution-connector-v2] ${JSON.stringify(data)}`);
+}
+
+function instanceNameFor(lineId: string | number, custom?: string) {
+  if (custom && custom.trim().length > 0) return custom.trim();
+  return `${PREFIX}${lineId}`;
 }
 
 function normalizeBase(u: string): string {
@@ -247,10 +255,16 @@ serve(async (req) => {
     }
   }
 
-  // 2) List instances with multi-path compatibility
-  if (action === "list_instances") {
+  // 2) List instances with multi-path compatibility + diag_evolution
+  if (action === "list_instances" || action === "diag_evolution") {
     try {
       const cfg = await getEvoCfg(service, user.id);
+      
+      if (action === "diag_evolution") {
+        // Use shared evolution adapter for consistent listing
+        const r = await listInstances();
+        return ok({ instances: r.data ?? [], status: r.status });
+      }
       
       // Try multiple endpoints for compatibility
       let r = await evoFetch(cfg, "/instance/fetchInstances", "GET");
@@ -302,44 +316,34 @@ serve(async (req) => {
     }
   }
 
-  // 4) Garantir sessão por linha (NÃO CRIAR instância automaticamente)
+  // 4) Garantir/criar sessão por linha com auto-create
   if (action === "ensure_line_session") {
     try {
       const lineId = String(body?.lineId || body?.bitrix_line_id || "");
       if (!lineId) return ko("MISSING_PARAM", { message: "lineId parameter is required", status: 400 });
-      const instanceName = `evo_line_${lineId}`;
-      const cfg = await getEvoCfg(service, user.id);
-
-      // 1) Verificar se a instância já existe
-      let li = await evoFetch(cfg, "/instance/list", "GET");
-      if (!li.ok && li.status === 404) {
-        li = await evoFetch(cfg, "/instance/fetchInstances", "GET");
-      }
-      if (!li.ok && li.status === 404) {
-        li = await evoFetch(cfg, "/sessions", "GET");
-      }
       
-      const instances = li?.data?.instances || li?.data || [];
-      const exists = Array.isArray(instances) && instances.some((x: any) =>
-        x?.instanceName === instanceName || x?.name === instanceName || x?.id === instanceName
-      );
-
-      // 2) Retornar erro se instância não existir
-      if (!exists) {
-        return ko("INSTANCE_NOT_FOUND", {
-          message: `Instância ${instanceName} não encontrada. Crie a instância manualmente na Evolution API primeiro.`,
-          instanceName,
-          lineId
-        });
+      const customName = body?.instanceName;
+      const instanceName = instanceNameFor(lineId, customName);
+      
+      // NOVO: garantir/auto-criar a instância usando shared adapter
+      const ensured = await ensureInstance(instanceName, AUTO);
+      if (!ensured.exists) {
+        return ko("INSTANCE_NOT_FOUND", { status: 404, instanceName, lineId });
       }
 
-      // 3) Upsert wa_sessions local apenas se instância existir
+      // Upsert wa_sessions local
       await upsertSessionForLine(service, user.id, lineId, instanceName, { 
         status: "PENDING_QR",
         instance_id: instanceName 
       });
       
-      return ok({ line: lineId, instance: instanceName, exists: true });
+      return ok({ 
+        line: lineId, 
+        instance: instanceName, 
+        exists: true,
+        created: ensured.created,
+        message: ensured.created ? "Instância criada automaticamente" : "Instância garantida"
+      });
     } catch (e: any) { 
       await log({ category: "ERROR", action: "ensure_line_session", error: String(e?.message || e), userId: user.id });
       const mappedError = mapEvolutionError(e, action);
@@ -630,11 +634,31 @@ serve(async (req) => {
     }
   }
 
+  // NEW: Bind OpenLine ↔ Evolution instance
+  if (action === "bind_openline") {
+    try {
+      const { lineId, instanceName } = body ?? {};
+      if (!lineId || !instanceName) return ko("INVALID_PAYLOAD", { status: 422 });
+
+      // upsert no Supabase
+      const { data, error } = await service.from("evo_line_bindings").upsert({
+        line_id: String(lineId),
+        instance_name: String(instanceName),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "line_id" }).select().single();
+
+      if (error) return ko("DB_UPSERT_FAILED", { status: 500, detail: error.message });
+      return ok({ message: "Vinculado", binding: data });
+    } catch (e: any) {
+      return ko("DB_ERROR", { status: 500, detail: String(e?.message || e) });
+    }
+  }
+
   return ko("UNKNOWN_ACTION", { 
     message: `Ação '${action}' não reconhecida`, 
     availableActions: [
-      "diag", "list_instances", "proxy", "ensure_line_session", "start_session_for_line", 
-      "get_qr_for_line", "get_status_for_line", "test_send", "bind_line",
+      "diag", "diag_evolution", "list_instances", "proxy", "ensure_line_session", "start_session_for_line", 
+      "get_qr_for_line", "get_status_for_line", "test_send", "bind_line", "bind_openline",
       "instance.createOrAttach", "instance.status", "instance.qr", "send_message"
     ]
   });

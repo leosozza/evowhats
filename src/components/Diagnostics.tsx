@@ -10,15 +10,24 @@ import { useToast } from "@/hooks/use-toast";
 export function Diagnostics() {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<any>(null);
+  const [instances, setInstances] = useState<any[]>([]);
   const { toast } = useToast();
 
   const runDiagnostics = async () => {
     setIsRunning(true);
     setResults(null);
+    setInstances([]);
 
     try {
+      // Run main diagnostics
       const diagResult = await callEvolution("diag");
       setResults(diagResult);
+      
+      // Get Evolution instances list for better diagnostics
+      const evolutionResult = await callEvolution("diag_evolution");
+      if (evolutionResult?.ok && evolutionResult?.instances) {
+        setInstances(evolutionResult.instances);
+      }
       
       if (diagResult?.ok) {
         toast({
@@ -80,6 +89,20 @@ export function Diagnostics() {
                       <span className="ml-1">{results.ok ? "OK" : "Erro"}</span>
                     </Badge>
                   </div>
+                  
+                  {instances.length > 0 && (
+                    <div className="border rounded p-3 bg-muted/50">
+                      <h4 className="text-sm font-medium mb-2">Instâncias Evolution ({instances.length}):</h4>
+                      <div className="space-y-1">
+                        {instances.map((instance, idx) => (
+                          <div key={idx} className="text-xs text-muted-foreground">
+                            • {instance.instanceName || instance.name || instance.id || `Instance ${idx + 1}`}
+                            {instance.state && ` (${instance.state})`}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                   {results.steps && Object.keys(results.steps).length > 0 && (
                     <div className="border rounded p-3 bg-muted/50">
