@@ -136,6 +136,39 @@ export type Database = {
         }
         Relationships: []
       }
+      bitrix_credentials_audit: {
+        Row: {
+          action: string
+          credential_id: string
+          details: Json | null
+          id: string
+          ip_address: unknown | null
+          timestamp: string | null
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          credential_id: string
+          details?: Json | null
+          id?: string
+          ip_address?: unknown | null
+          timestamp?: string | null
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          credential_id?: string
+          details?: Json | null
+          id?: string
+          ip_address?: unknown | null
+          timestamp?: string | null
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       bitrix_event_logs: {
         Row: {
           created_at: string
@@ -698,6 +731,40 @@ export type Database = {
       cleanup_expired_oauth_states: {
         Args: Record<PropertyKey, never>
         Returns: undefined
+      }
+      get_active_bitrix_credentials: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          access_token: string | null
+          client_id: string
+          client_secret: string
+          created_at: string
+          expires_at: string | null
+          id: string
+          installation_id: string | null
+          is_active: boolean | null
+          portal_url: string
+          refresh_token: string | null
+          scope: string | null
+          updated_at: string
+          user_id: string
+        }[]
+      }
+      get_bitrix_credentials_safe: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          client_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          is_active: boolean
+          portal_url: string
+          updated_at: string
+        }[]
+      }
+      revoke_bitrix_credentials: {
+        Args: { credential_id: string }
+        Returns: boolean
       }
     }
     Enums: {
