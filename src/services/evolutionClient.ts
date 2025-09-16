@@ -6,22 +6,19 @@ import type { EvoResponse, EvoConnectData, EvoQrData, EvoDiagnosticsData } from 
 type Body = Record<string, any>;
 
 function normalize<T = any>(raw: any): EvoResponse<T> {
-  // Garante shape consistente SEM depender do formato exato retornado
   if (raw && typeof raw === "object") {
-    const success = Object.prototype.hasOwnProperty.call(raw, "success") ? !!raw.success : true;
-    const ok      = Object.prototype.hasOwnProperty.call(raw, "ok") ? !!raw.ok : success;
+    const hasSuccess = Object.prototype.hasOwnProperty.call(raw, "success");
+    const hasOk      = Object.prototype.hasOwnProperty.call(raw, "ok");
+    const success = hasSuccess ? !!(raw as any).success : true;
+    const ok      = hasOk ? !!(raw as any).ok : success;
     const code    = (raw as any).code;
     const error   = (raw as any).error;
     const message = (raw as any).message;
-
-    // Se já veio um `data`, usamos; senão, tudo que sobrar vira `data`
     const data    = Object.prototype.hasOwnProperty.call(raw, "data")
       ? (raw as any).data
       : raw;
-
     return { success, ok, code, error, message, data };
   }
-  // Primitivo → sucesso com data
   return { success: true, ok: true, data: raw as T };
 }
 
@@ -31,8 +28,8 @@ async function invoke<T = any>(action: string, body: Body): Promise<EvoResponse<
     body: { action, ...body },
   });
   if (error) {
-    console.warn("[evolutionClient] Invoke error:", error);
-    return { success: false, ok: false, error: error.message, code: error.name };
+    console.warn("[evolutionClient] Invoke transport error:", error);
+    return { success: false, ok: false, code: "INVOKE_TRANSPORT_ERROR", error: error.message };
   }
   console.log("[evolutionClient] Invoke raw:", data);
   return normalize<T>(data);
@@ -62,11 +59,11 @@ async function fetchDirect<T = any>(action: string, body: Body): Promise<EvoResp
 
 async function post<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
   const r = await invoke<T>(action, body);
-  if (!r.success) {
-    console.warn("[evolutionClient] invoke failed, fallback to fetchDirect:", action, "→", JSON.stringify(r));
+  if (!r.success && r.code === "INVOKE_TRANSPORT_ERROR") {
+    console.warn("[evolutionClient] falling back to fetchDirect:", action);
     return await fetchDirect<T>(action, body);
   }
-  return r;
+  return r; // erro válido do backend → retorna sem fallback
 }
 
 export const evolutionClient = {

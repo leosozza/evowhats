@@ -62,10 +62,23 @@ serve(async (req) => {
       const line = lineId ?? "1";
       const name = instanceNameFor(line, instanceName);
 
-      const ensured = await ensureInstance(name, AUTO);
-      if (!ensured.exists) return J(origin, { success:false, ok:false, code:"INSTANCE_NOT_FOUND", error:"Instância não encontrada", instanceName:name, line });
+      const trace: any = { step: "start", line, name };
 
-      await connectInstance(name).catch(() => null);
+      const ensured = await ensureInstance(name, AUTO);
+      trace.ensureInstance = ensured;
+      if (!ensured?.exists) {
+        const cfgErr = ensured?.error?.code === "EVOLUTION_CONFIG_MISSING";
+        return J(origin, {
+          success: false,
+          ok: false,
+          code: cfgErr ? "EVOLUTION_CONFIG_MISSING" : "INSTANCE_NOT_FOUND",
+          error: cfgErr ? ensured.error?.error : "Instância não encontrada",
+          data: { instanceName: name, line: String(line), trace },
+        });
+      }
+
+      const conn = await connectInstance(name).catch((e: any) => ({ ok:false, error: String(e?.message || e) }));
+      trace.connectInstance = conn;
 
       const startedAt = Date.now();
       let qrB64: string | null = null;
@@ -73,17 +86,26 @@ serve(async (req) => {
 
       while (Date.now() - startedAt < POLL_TIMEOUT) {
         const [qr, st] = await Promise.all([getQr(name), getStatus(name)]).catch(() => [null, null]);
+        trace.polls = (trace.polls || 0) + 1;
+        trace.lastQr = qr;
+        trace.lastStatus = st;
         status = st?.data ?? null;
-        if (qr?.data) qrB64 = normalizeQr(qr.data);
-        if (qrB64) break;
+        if (qr?.data) {
+          qrB64 = normalizeQr(qr.data);
+          if (qrB64) break;
+        }
         const s = (status?.state || status?.status || "").toString().toLowerCase();
         if (["connected","open","ready","online"].includes(s)) break;
         await delay(POLL_MS);
       }
 
-      return J(origin, { success:true, ok:true, data:{ instanceName:name, line:String(line), status, qr_base64: qrB64 ?? null }});
+      return J(origin, {
+        success: true,
+        ok: true,
+        data: { instanceName: name, line: String(line), status, qr_base64: qrB64 ?? null, trace },
+      });
     } catch (e: any) {
-      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error", detail: e?.stack || null });
+      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error", data:{ trace: { thrown:true, stack:e?.stack } } });
     }
   }
 
@@ -92,12 +114,28 @@ serve(async (req) => {
     try {
       const { instanceName, lineId } = body ?? {};
       const name = instanceNameFor(lineId ?? "1", instanceName);
-      const qr = await getQr(name).catch(() => null);
-      const st = await getStatus(name).catch(() => null);
+      const trace: any = { step: "get_qr", name };
+      
+      const qr = await getQr(name).catch((e) => { trace.qrError = String(e); return null; });
+      const st = await getStatus(name).catch((e) => { trace.statusError = String(e); return null; });
+      
+      trace.qrResult = qr;
+      trace.statusResult = st;
+      
       const base64 = qr?.data ? normalizeQr(qr.data) : null;
-      return J(origin, { success:true, ok:true, data:{ instanceName:name, status: st?.data ?? null, qr_base64: base64 }});
+      return J(origin, { 
+        success: true, 
+        ok: true, 
+        data: { instanceName: name, status: st?.data ?? null, qr_base64: base64, trace } 
+      });
     } catch (e: any) {
-      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error" });
+      return J(origin, { 
+        success: false, 
+        ok: false, 
+        code: "ERROR", 
+        error: e?.message || "Unknown error", 
+        data: { trace: { thrown: true, stack: e?.stack } } 
+      });
     }
   }
 
@@ -106,10 +144,42 @@ serve(async (req) => {
     try {
       const base = Deno.env.get("EVOLUTION_BASE_URL") || null;
       const key  = Deno.env.get("EVOLUTION_API_KEY") || null;
-      const reach = base ? await fetch(base, { method:"GET" }).then(r=>({ ok:r.ok, status:r.status })).catch(e=>({ ok:false, error:String(e) })) : null;
-      return J(origin, { success:true, ok:true, data:{ env:{ base_set: !!base, key_set: !!key }, reach }});
+      
+      const env = { 
+        base_set: !!base, 
+        key_set: !!key,
+        base_url: base ? base.substring(0, 50) + (base.length > 50 ? "..." : "") : null,
+        prefix: PREFIX,
+        auto_create: AUTO,
+        poll_ms: POLL_MS,
+        poll_timeout: POLL_TIMEOUT
+      };
+      
+      let reach = null;
+      if (base) {
+        try {
+          const res = await fetch(base, { method: "GET" });
+          reach = { ok: res.ok, status: res.status, statusText: res.statusText };
+        } catch (e) {
+          reach = { ok: false, error: String(e) };
+        }
+      }
+      
+      const instances = await listInstances().catch((e) => ({ error: String(e), list: [] }));
+      
+      return J(origin, { 
+        success: true, 
+        ok: true, 
+        data: { env, reach, instances } 
+      });
     } catch (e:any) {
-      return J(origin, { success:false, ok:false, code:"DIAG_FAIL", error: e?.message || String(e) });
+      return J(origin, { 
+        success: false, 
+        ok: false, 
+        code: "DIAG_FAIL", 
+        error: e?.message || String(e),
+        data: { trace: { thrown: true, stack: e?.stack } }
+      });
     }
   }
 

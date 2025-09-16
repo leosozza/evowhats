@@ -281,9 +281,11 @@ export function Wizard() {
     try {
       const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
       if (!result.success) {
+        const trace = (result as any).data?.trace;
         const detail = result.error || result.message || JSON.stringify(result, null, 2);
-        console.error("[connectWhatsapp] fail:", result); // manter objeto
-        console.error("[connectWhatsapp] fail (string):", detail); // string p/ garantir visualização
+        console.error("[connectWhatsapp] fail object:", result);
+        console.error("[connectWhatsapp] fail string:", detail);
+        if (trace) { console.groupCollapsed("[connectWhatsapp] trace"); console.log(trace); console.groupEnd?.(); }
         toast({
           title: result.code || "Falha na conexão",
           description: detail,
