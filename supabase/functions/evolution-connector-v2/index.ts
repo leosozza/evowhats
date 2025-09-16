@@ -22,8 +22,8 @@ function instanceNameFor(lineId: string | number, custom?: string) {
   return s ? s : `${PREFIX}${lineId}`;
 }
 
-function J(origin: string | null | undefined, body: any, ok = true) {
-  return new Response(JSON.stringify(body), { status: 200, headers: headers(origin ?? null) });
+function J(origin: string | null | undefined, body: any, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: headers(origin ?? null) });
 }
 
 function svc() {
@@ -59,58 +59,38 @@ serve(async (req) => {
   if (action === "connect_whatsapp") {
     try {
       const { lineId, instanceName } = body ?? {};
-      const line = lineId ?? "1";
-      const name = instanceNameFor(line, instanceName);
+      const name = instanceNameFor(lineId ?? "1", instanceName);
 
-      const trace: any = { step: "start", line, name };
-
-    const ensured = await (async () => {
-      // tenta listar antes, já força descoberta
-      const li = await listInstances().catch(()=>null);
-      trace.list = li;
-      // emulate ensureInstance com create fallback usando adapter que já tenta vários payloads
-      const st = await getStatus(name).catch(()=>null);
-      trace.status = st;
-      if (st?.ok) return { exists:true, created:false, data: st.data };
-      const cr = await createInstance(name, Deno.env.get("EVOLUTION_INTEGRATION") || "WHATSAPP-BAILEYS").catch(()=>null);
-      trace.create = cr;
-      if (cr?.ok || cr?.status === 201 || cr?.status === 409) return { exists:true, created: cr?.status !== 409, data: cr?.data };
-      return { exists:false, created:false, error: cr?.data || cr };
-    })();
-
-    if (!ensured?.exists) {
-      if (ensured?.error?.code === "EVOLUTION_CONFIG_MISSING") {
-        return J(origin, { success:false, ok:false, code:"EVOLUTION_CONFIG_MISSING", error: ensured.error.error, data:{ trace } });
-      }
-      // motivo bruto de falha
-      return J(origin, { success:false, ok:false, code:"EVOLUTION_CREATE_FAILED", error:"Falha ao criar instância Evolution", data:{ reason: ensured?.error, trace } });
-    }
-
-      const conn = await connectInstance(name).catch((e:any)=>({ ok:false, error:String(e?.message||e) }));
-      trace.connect = conn;
-
-      const startedAt = Date.now();
-      let qrB64: string | null = null;
-      let status: any = null;
-
-      while (Date.now() - startedAt < POLL_TIMEOUT) {
-        const [qr, st] = await Promise.all([getQr(name), getStatus(name)]).catch(() => [null, null]);
-        trace.polls = (trace.polls || 0) + 1;
-        trace.lastQr = qr;
-        trace.lastStatus = st;
-        status = st?.data ?? null;
-        if (qr?.data) {
-          const b64 = normalizeQr(qr.data);
-          if (b64) { qrB64 = b64; break; }
+      // 1) Garante existência (lista → se não existe e autoCreate=true cria)
+      const ensured = await ensureInstance(name).catch(() => ({ ok:false }));
+      if (!ensured?.ok) {
+        const created = await createInstance(name).catch(() => ({ ok:false }));
+        if (!created?.ok) {
+          return J(origin, { success:false, ok:false, code:"EVOLUTION_CREATE_FAILED", error:"Falha ao criar instância Evolution" });
         }
-        const s = (status?.state || status?.status || "").toString().toLowerCase();
-        if (["connected","open","ready","online"].includes(s)) break;
-        await delay(POLL_MS);
       }
 
-      return J(origin, { success:true, ok:true, data:{ instanceName:name, line:String(line), status, qr_base64: qrB64 ?? null, trace }});
+      // 2) Conecta (traz QR)
+      const connected = await connectInstance(name).catch(() => ({ ok:false }));
+      if (!connected?.ok) {
+        return J(origin, { success:false, ok:false, code:"EVOLUTION_CONNECT_FAILED", error:"Falha ao conectar instância Evolution" });
+      }
+
+      // 3) Tenta capturar QR/status uma vez (resposta rápida)
+      const [qr, st] = await Promise.all([ getQr(name).catch(()=>null), getStatus(name).catch(()=>null) ]);
+      const base64 = qr?.data ? normalizeQr(qr.data) : null;
+
+      return J(origin, {
+        success:true, ok:true,
+        data:{
+          line:String(lineId ?? "1"),
+          instanceName:name,
+          status: st?.data ?? null,
+          qr_base64: base64
+        }
+      });
     } catch (e:any) {
-      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error", data:{ trace:{ thrown:true, stack:e?.stack } } });
+      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || String(e) }, 500);
     }
   }
 
