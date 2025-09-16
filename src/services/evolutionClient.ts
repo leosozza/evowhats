@@ -1,66 +1,52 @@
-import { API_CONFIG } from "@/config/api";
 import { supabase } from "@/integrations/supabase/client";
+import { API_CONFIG } from "@/config/api";
 import { ENV } from "@/config/env";
 import type { EvoResponse, EvoConnectData, EvoQrData, EvoDiagnosticsData } from "@/types/evolution";
 
 type Body = Record<string, any>;
 
-// Normaliza respostas: se não vier "data", embrulha o resto em data
 function normalize<T = any>(raw: any): EvoResponse<T> {
   if (raw && typeof raw === "object" && "data" in raw) return raw as EvoResponse<T>;
   const { success = true, ok = true, error, message, code, ...rest } = raw || {};
   return { success: !!success, ok: !!ok, error, message, code, data: rest as T };
 }
 
-// 1) Preferir supabase.functions.invoke (leva JWT automaticamente)
 async function invoke<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
-  console.log(`[evolutionClient] Invoking ${action} with body:`, body);
   const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
     body: { action, ...body },
   });
-  
   if (error) {
-    console.error(`[evolutionClient] Invoke error for ${action}:`, error);
+    console.error("[evolutionClient] invoke error:", error);
     return { success: false, ok: false, error: error.message, code: error.name };
   }
-  
-  console.log(`[evolutionClient] Invoke success for ${action}:`, data);
   return normalize<T>(data);
 }
 
-// 2) Fallback (se precisar atingir URL direta), incluindo Authorization e apikey
 async function fetchDirect<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
-  console.log(`[evolutionClient] Using fetchDirect for ${action}`);
   const { data: s } = await supabase.auth.getSession();
   const token = s?.session?.access_token;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "apikey": ENV.SUPABASE_PUBLISHABLE_KEY,
-    "Authorization": `Bearer ${token ?? ENV.SUPABASE_PUBLISHABLE_KEY}`,
+    "Authorization": token ? `Bearer ${token}` : `Bearer ${ENV.SUPABASE_PUBLISHABLE_KEY}`,
   };
-  
-  console.log(`[evolutionClient] Headers for ${action}:`, { ...headers, Authorization: token ? "Bearer [TOKEN]" : "Bearer [ANON_KEY]" });
-  
   const res = await fetch(`${API_CONFIG.baseUrl}/evolution-connector-v2`, {
     method: "POST",
     headers,
     body: JSON.stringify({ action, ...body }),
   });
-  
-  console.log(`[evolutionClient] Response status for ${action}:`, res.status);
   const json = await res.json().catch(() => ({}));
-  console.log(`[evolutionClient] Response data for ${action}:`, json);
+  if (!res.ok) console.error("[evolutionClient] fetchDirect http", res.status, json);
   return normalize<T>(json);
 }
 
 async function post<T = any>(action: string, body: Body): Promise<EvoResponse<T>> {
-  try {
-    // tente via invoke (JWT do usuário). Se falhar por CORS local, usa fallback:
-    return await invoke<T>(action, body);
-  } catch (error) {
-    console.warn(`[evolutionClient] Invoke failed for ${action}, trying fetchDirect:`, error);
+  const r = await invoke<T>(action, body);
+  if (!r.success) {
+    console.warn("[evolutionClient] invoke failed, fallback to fetchDirect:", action);
     return await fetchDirect<T>(action, body);
   }
+  return r;
 }
 
 export const evolutionClient = {
@@ -73,16 +59,17 @@ export const evolutionClient = {
   bindOpenLine(lineId: string | number, instanceName: string) {
     return post("bind_openline", { lineId, instanceName });
   },
+  // nome padronizado: usar "test_send"
   testSend(lineId: string | number, to: string, text: string) {
-    return post("test_send_message", { lineId, to, text });
+    return post("test_send", { lineId, to, text });
   },
   diag() {
-    return post("diag_evolution", {});
+    return post("diag_evolution_full", {});
   },
   getDiagnostics() {
-    return post<EvoDiagnosticsData>("diag_evolution", {});
+    return post<EvoDiagnosticsData>("diag_evolution_full", {});
   },
   listInstances() {
-    return post<EvoDiagnosticsData>("diag_evolution", {});
+    return post<EvoDiagnosticsData>("diag_evolution_full", {});
   },
 };

@@ -45,11 +45,10 @@ interface WizardState {
     lineId?: string;
   };
   evolution: {
-    instanceId?: string;
-    instanceName?: string;
-    status: string;
-    qrCode?: string;
+    status: "unknown" | "connecting" | "connected";
     connected: boolean;
+    instanceName: string;
+    qrCode: string | null;
   };
   binding: {
     completed: boolean;
@@ -74,8 +73,10 @@ export function Wizard() {
       activated: false,
     },
     evolution: {
-      status: "unknown",
+      status: "unknown" as "unknown" | "connecting" | "connected",
       connected: false,
+      instanceName: "",
+      qrCode: null,
     },
     binding: {
       completed: false,
@@ -84,34 +85,21 @@ export function Wizard() {
   });
 
   // Evolution QR polling hook - use line ID if available
-  const instanceName = state.connector.lineId ? `evo_line_${state.connector.lineId}` : "evo_line_1";
+  const instanceName = state.evolution.instanceName || (state.connector.lineId ? `evo_line_${state.connector.lineId}` : "evo_line_1");
   const { qr, status: qrStatus, running, start, stop } = useEvolutionQr(
-    async (action: string, payload: any) => {
-      return await evolutionClient.getQr(state.connector.lineId || "1", instanceName);
-    },
+    async () => await evolutionClient.getQr(state.connector.lineId || "1", instanceName),
     instanceName
   );
 
   // Monitor QR status and handle connection changes
   useEffect(() => {
-    if (qrStatus) {
-      const stateStr = (qrStatus?.state || qrStatus?.status || "").toString().toLowerCase();
-      if (["connected", "open", "ready", "online"].includes(stateStr)) {
-        setState(prev => ({
-          ...prev,
-          evolution: {
-            ...prev.evolution,
-            status: "connected",
-            connected: true,
-          },
-        }));
-        setShowQrModal(false);
-        stop();
-        toast({
-          title: "WhatsApp conectado!",
-          description: "Instância Evolution conectada com sucesso",
-        });
-      }
+    if (!qrStatus) return;
+    const s = (qrStatus?.state || qrStatus?.status || "").toString().toLowerCase();
+    if (["connected","open","ready","online"].includes(s)) {
+      setState(prev => ({ ...prev, evolution: { ...prev.evolution, status: "connected", connected: true, qrCode: null } }));
+      setShowQrModal(false);
+      stop();
+      toast({ title: "WhatsApp conectado!", description: "Instância Evolution conectada com sucesso" });
     }
   }, [qrStatus, stop, toast]);
 
@@ -285,54 +273,26 @@ export function Wizard() {
   // Step 3: Connect Evolution with robust QR handling
   const handleEvolutionConnect = async () => {
     if (!state.connector.lineId) {
-      toast({
-        title: "Erro",
-        description: "Configure o conector Bitrix primeiro",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: "Configure o conector Bitrix primeiro", variant: "destructive" });
       return;
     }
-
     setShowQrModal(true);
-    toast({
-      title: "Conectando",
-      description: "Instância pronta. Gerando QR...",
-    });
-
+    toast({ title: "Conectando", description: "Instância pronta. Gerando QR..." });
     try {
       const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
-
-      if (result.success) {
-        setState(prev => ({
-          ...prev,
-          evolution: {
-            ...prev.evolution,
-            instanceName: instanceName,
-            status: "connecting",
-            qrCode: result.data?.qr_base64 || null,
-          },
-        }));
-
-        start(); // Start QR polling
-        
-        if (result.data?.qr_base64) {
-          toast({
-            title: "QR Gerado", 
-            description: "Escaneie o QR code para conectar o WhatsApp",
-          });
-        }
-      } else {
+      if (!result.success) {
         console.error("[connectWhatsapp] fail:", result);
-        throw new Error(result.code || result.error || "Falha na conexão");
+        setShowQrModal(false);
+        toast({ title: result.code || "Falha na conexão", description: result.error || result.message || "Verifique Evolution API.", variant: "destructive" });
+        return;
       }
+      setState(prev => ({ ...prev, evolution: { ...prev.evolution, instanceName, status: "connecting", qrCode: result.data?.qr_base64 ?? null } }));
+      if (result.data?.qr_base64) toast({ title: "QR Gerado", description: "Escaneie o QR code para conectar o WhatsApp" });
+      start(); // inicia polling
     } catch (error: any) {
-      console.error("[connectWhatsapp] error:", error);
+      console.error("Erro ao conectar Evolution:", error);
+      toast({ title: "Erro na Conexão", description: error?.message ?? "Falha ao conectar com WhatsApp", variant: "destructive" });
       setShowQrModal(false);
-      toast({
-        title: error?.code || "Erro na Conexão",
-        description: error?.message || "Verifique Evolution API (URL, API key, rotas).",
-        variant: "destructive"
-      });
     }
   };
 

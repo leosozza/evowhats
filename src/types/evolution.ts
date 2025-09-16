@@ -13,11 +13,6 @@ export type EvoQrData = {
   qr_base64?: string | null;
 };
 
-export type EvoBindData = {
-  lineId: string;
-  instanceName: string;
-};
-
 export type EvoDiagnosticsData = {
   instances?: any[];
   [k: string]: any;
