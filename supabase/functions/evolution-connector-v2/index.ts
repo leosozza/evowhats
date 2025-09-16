@@ -66,18 +66,21 @@ serve(async (req) => {
 
       const ensured = await ensureInstance(name, AUTO);
       trace.ensureInstance = ensured;
+
       if (!ensured?.exists) {
-        const cfgErr = ensured?.error?.code === "EVOLUTION_CONFIG_MISSING";
-        return J(origin, {
-          success: false,
-          ok: false,
-          code: cfgErr ? "EVOLUTION_CONFIG_MISSING" : "INSTANCE_NOT_FOUND",
-          error: cfgErr ? ensured.error?.error : "Instância não encontrada",
-          data: { instanceName: name, line: String(line), trace },
-        });
+        // Se o adapter sinalizou config faltando, propaga
+        if (ensured?.error?.code === "EVOLUTION_CONFIG_MISSING") {
+          return J(origin, { success:false, ok:false, code:"EVOLUTION_CONFIG_MISSING", error: ensured.error.error, data:{ trace } });
+        }
+        // Se a criação falhou, traga o payload bruto do Evolution
+        if (ensured?.error) {
+          return J(origin, { success:false, ok:false, code:"EVOLUTION_CREATE_FAILED", error:"Falha ao criar instância Evolution", data:{ reason: ensured.error, trace } });
+        }
+        // Sem detalhes → INSTANCE_NOT_FOUND
+        return J(origin, { success:false, ok:false, code:"INSTANCE_NOT_FOUND", error:"Instância não encontrada", data:{ instanceName:name, line:String(line), trace } });
       }
 
-      const conn = await connectInstance(name).catch((e: any) => ({ ok:false, error: String(e?.message || e) }));
+      const conn = await connectInstance(name).catch((e:any) => ({ ok:false, error:String(e?.message || e) }));
       trace.connectInstance = conn;
 
       const startedAt = Date.now();
@@ -91,21 +94,17 @@ serve(async (req) => {
         trace.lastStatus = st;
         status = st?.data ?? null;
         if (qr?.data) {
-          qrB64 = normalizeQr(qr.data);
-          if (qrB64) break;
+          const b64 = normalizeQr(qr.data);
+          if (b64) { qrB64 = b64; break; }
         }
         const s = (status?.state || status?.status || "").toString().toLowerCase();
         if (["connected","open","ready","online"].includes(s)) break;
         await delay(POLL_MS);
       }
 
-      return J(origin, {
-        success: true,
-        ok: true,
-        data: { instanceName: name, line: String(line), status, qr_base64: qrB64 ?? null, trace },
-      });
-    } catch (e: any) {
-      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error", data:{ trace: { thrown:true, stack:e?.stack } } });
+      return J(origin, { success:true, ok:true, data:{ instanceName:name, line:String(line), status, qr_base64: qrB64 ?? null, trace }});
+    } catch (e:any) {
+      return J(origin, { success:false, ok:false, code:"ERROR", error: e?.message || "Unknown error", data:{ trace:{ thrown:true, stack:e?.stack } } });
     }
   }
 
@@ -180,6 +179,16 @@ serve(async (req) => {
         error: e?.message || String(e),
         data: { trace: { thrown: true, stack: e?.stack } }
       });
+    }
+  }
+
+  // Ação diag_instances
+  if (action === "diag_instances") {
+    try {
+      const li = await listInstances();
+      return J(origin, { success: li.ok, ok: li.ok, data: { status: li.status, body: li.data } });
+    } catch (e:any) {
+      return J(origin, { success:false, ok:false, code:"DIAG_INSTANCES_FAIL", error:e?.message || String(e) });
     }
   }
 

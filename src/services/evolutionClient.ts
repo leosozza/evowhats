@@ -89,4 +89,7 @@ export const evolutionClient = {
   listInstances() {
     return post<EvoDiagnosticsData>("diag_evolution_full", {});
   },
+  diagInstances() {
+    return post("diag_instances", {});
+  },
 };

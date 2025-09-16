@@ -282,15 +282,13 @@ export function Wizard() {
       const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
       if (!result.success) {
         const trace = (result as any).data?.trace;
-        const detail = result.error || result.message || JSON.stringify(result, null, 2);
-        console.error("[connectWhatsapp] fail object:", result);
-        console.error("[connectWhatsapp] fail string:", detail);
+        const reason = (result as any).data?.reason;
+        const detail =
+          result.error || result.message ||
+          (reason ? JSON.stringify(reason) : JSON.stringify(result, null, 2));
+        console.error("[connectWhatsapp] fail:", result);
         if (trace) { console.groupCollapsed("[connectWhatsapp] trace"); console.log(trace); console.groupEnd?.(); }
-        toast({
-          title: result.code || "Falha na conexão",
-          description: detail,
-          variant: "destructive",
-        });
+        toast({ title: result.code || "Falha na conexão", description: detail, variant: "destructive" });
         setShowQrModal(false);
         return;
       }
@@ -585,6 +583,26 @@ export function Wizard() {
                   className="w-full"
                 >
                   Diagnóstico Evolution
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      const instances = await evolutionClient.diagInstances();
+                      console.log("[evolution instances]", instances);
+                      const count = instances?.data?.body?.length || 0;
+                      toast({ 
+                        title: "Instâncias Evolution", 
+                        description: `${count} instâncias encontradas. Veja o console para detalhes.` 
+                      });
+                    } catch (e: any) {
+                      toast({ title: "Listar instâncias falhou", description: e?.message || String(e), variant: "destructive" });
+                    }
+                  }}
+                  className="w-full"
+                >
+                  Listar Instâncias
                 </Button>
               </CardContent>
             </Card>
