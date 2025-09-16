@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances, getDiscovered } from "../_shared/evolution.ts";
+import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances, getDiscovered, resetDiscovery } from "../_shared/evolution.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -141,6 +141,31 @@ serve(async (req) => {
         error: e?.message || "Unknown error", 
         data: { trace: { thrown: true, stack: e?.stack } } 
       });
+    }
+  }
+
+  // Ação diag_discovery
+  if (action === "diag_discovery") {
+    try {
+      const origin = req.headers.get("origin");
+      const discovered = await getDiscovered().catch((e:any)=>({ error: String(e?.message || e) }));
+      return J(origin, { success:true, ok:true, data: discovered });
+    } catch (e:any) {
+      const origin = req.headers.get("origin");
+      return J(origin, { success:false, ok:false, code:"DIAG_DISCOVERY_FAIL", error: e?.message || String(e) });
+    }
+  }
+
+  // Ação diag_reset_discovery
+  if (action === "diag_reset_discovery") {
+    try {
+      const origin = req.headers.get("origin");
+      resetDiscovery();
+      const after = await getDiscovered().catch((e:any)=>({ error: String(e?.message || e) }));
+      return J(origin, { success:true, ok:true, data: { reset:true, after } });
+    } catch (e:any) {
+      const origin = req.headers.get("origin");
+      return J(origin, { success:false, ok:false, code:"DIAG_RESET_FAIL", error: e?.message || String(e) });
     }
   }
 

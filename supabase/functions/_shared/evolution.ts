@@ -19,6 +19,10 @@ const CANDIDATES = {
 
 let DISCOVERED: EvoPaths | null = null;
 
+export function resetDiscovery() {
+  DISCOVERED = null;
+}
+
 function getCfg(): EvoCfg {
   const rawBase = (Deno.env.get("EVOLUTION_BASE_URL") || "").trim();
   const base = rawBase.replace(/\/+$/, "");
@@ -36,7 +40,18 @@ function getCfg(): EvoCfg {
 }
 
 function joinUrl(base: string, path: string) {
-  const p = path.startsWith("/") ? path : `/${path}`;
+  let p = path.startsWith("/") ? path : `/${path}`;
+
+  // ❗ Anti-duplicação: se base já termina com /api, /v1, /evolution,
+  // e o path também começa com o mesmo segmento, remove do path.
+  const segs = ["api", "v1", "evolution"];
+  for (const seg of segs) {
+    const suf = `/${seg}`;
+    if (base.toLowerCase().endsWith(suf) && p.toLowerCase().startsWith(suf + "/")) {
+      p = p.slice(suf.length); // remove o prefixo duplicado
+      break;
+    }
+  }
   return `${base}${p}`;
 }
 
@@ -53,6 +68,10 @@ function buildHeaders(cfg: EvoCfg): Record<string,string> {
 }
 
 async function fetchJson(url: string, init: RequestInit) {
+  const DEBUG = (Deno.env.get("EVOLUTION_DEBUG") || "").toLowerCase() === "true";
+  if (DEBUG) {
+    console.log("[EVO fetch]", init?.method, url);
+  }
   const res = await fetch(url, init);
   let data: any = null;
   try { data = await res.json(); } catch {}
@@ -81,9 +100,13 @@ async function discoverPaths(): Promise<EvoPaths> {
   if (!cfg.ok) throw new Error("EVOLUTION_CONFIG_MISSING");
 
   // Descobrir LIST primeiro
+  const DEBUG = (Deno.env.get("EVOLUTION_DEBUG") || "").toLowerCase() === "true";
   let LIST = CANDIDATES.LIST[0];
   for (const p of CANDIDATES.LIST) {
     const r = await probePath(cfg, p);
+    if (DEBUG) {
+      console.log("[EVO discover] testing LIST:", p, "→", r?.status, r?.ok);
+    }
     if (looksLikeListResponse(r)) { LIST = p; break; }
   }
   // Heurística simples pros demais (mantém candidatos mas prioriza o mesmo prefixo encontrado)

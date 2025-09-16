@@ -281,18 +281,21 @@ export function Wizard() {
     toast({ title: "Conectando", description: "Instância pronta. Gerando QR..." });
     try {
       const result: EvoResponse<EvoConnectData> = await evolutionClient.connectWhatsapp(state.connector.lineId, instanceName);
-      if (!result.success) {
-        const trace = (result as any).data?.trace;
-        const reason = (result as any).data?.reason;
-        const detail =
-          result.error || result.message ||
-          (reason ? JSON.stringify(reason) : JSON.stringify(result, null, 2));
-        console.error("[connectWhatsapp] fail:", result);
-        if (trace) { console.groupCollapsed("[connectWhatsapp] trace"); console.log(trace); console.groupEnd?.(); }
-        toast({ title: result.code || "Falha na conexão", description: detail, variant: "destructive" });
-        setShowQrModal(false);
-        return;
+    if (!result.success) {
+      const trace  = (result as any).data?.trace;
+      const reason = (result as any).data?.reason;
+      const detail = result.error || result.message || (reason ? JSON.stringify(reason) : JSON.stringify(result));
+      console.error("[connectWhatsapp] fail object:", result);
+      if (trace) {
+        console.groupCollapsed("[connectWhatsapp] trace");
+        console.log(trace);
+        console.groupEnd?.();
       }
+      console.error("[connectWhatsapp] fail string:", detail);
+      toast({ title: result.code || "Falha na conexão", description: detail, variant: "destructive" });
+      setShowQrModal(false);
+      return;
+    }
       setState(prev => ({ ...prev, evolution: { ...prev.evolution, instanceName, status: "connecting", qrCode: result.data?.qr_base64 ?? null } }));
       if (result.data?.qr_base64) toast({ title: "QR Gerado", description: "Escaneie o QR code para conectar o WhatsApp" });
       start(); // inicia polling
@@ -567,68 +570,117 @@ export function Wizard() {
                     {state.evolution.connected ? "Reconectar" : "Conectar WhatsApp"}
                   </Button>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        try {
-                          const diag = await evolutionClient.diag();
-                          console.log("[evolution diag]", diag);
-                          const discovered = diag?.data?.discovered;
-                          toast({
-                            title: "Diagnóstico Evolution",
-                            description: discovered?.paths 
-                              ? `Paths OK: ${Object.keys(discovered.paths).join(", ")}` 
-                              : "Erro na detecção de paths",
-                            variant: discovered?.paths ? "default" : "destructive"
-                          });
-                        } catch (e: any) {
-                          console.error("Diagnostic error:", e);
-                          toast({
-                            title: "Erro no diagnóstico",
-                            description: e.message,
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                    >
-                      🔧 Diagnóstico
-                    </Button>
+                   <div className="grid grid-cols-2 gap-2">
+                     <Button
+                       variant="secondary"
+                       onClick={async () => {
+                         try {
+                           const diag = await evolutionClient.diag();
+                           console.log("[evolution diag]", diag);
+                           const discovered = diag?.data?.discovered;
+                           toast({
+                             title: "Diagnóstico Evolution",
+                             description: discovered?.paths 
+                               ? `Paths OK: ${Object.keys(discovered.paths).join(", ")}` 
+                               : "Erro na detecção de paths",
+                             variant: discovered?.paths ? "default" : "destructive"
+                           });
+                         } catch (e: any) {
+                           console.error("Diagnostic error:", e);
+                           toast({
+                             title: "Erro no diagnóstico",
+                             description: e.message,
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                     >
+                       🔧 Diagnóstico
+                     </Button>
 
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        try {
-                          const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
-                            body: { action: 'diag_instances' }
-                          });
-                          console.log("[diag_instances]", data);
-                          if (data?.success) {
-                            const count = Array.isArray(data.data?.body) ? data.data.body.length : 0;
-                            toast({
-                              title: "Instâncias Evolution",
-                              description: `Status ${data.data?.status}: ${count} instância(s)`,
-                            });
-                          } else {
-                            toast({
-                              title: "Erro ao listar",
-                              description: data?.error || "Erro desconhecido",
-                              variant: "destructive"
-                            });
-                          }
-                        } catch (e: any) {
-                          console.error("Instance list error:", e);
-                          toast({
-                            title: "Erro",
-                            description: e.message,
-                            variant: "destructive"
-                          });
-                        }
-                      }}
-                    >
-                      📋 Listar
-                    </Button>
-                  </div>
+                     <Button
+                       variant="secondary"
+                       onClick={async () => {
+                         try {
+                           const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
+                             body: { action: 'diag_instances' }
+                           });
+                           console.log("[diag_instances]", data);
+                           if (data?.success) {
+                             const count = Array.isArray(data.data?.body) ? data.data.body.length : 0;
+                             toast({
+                               title: "Instâncias Evolution",
+                               description: `Status ${data.data?.status}: ${count} instância(s)`,
+                             });
+                           } else {
+                             toast({
+                               title: "Erro ao listar",
+                               description: data?.error || "Erro desconhecido",
+                               variant: "destructive"
+                             });
+                           }
+                         } catch (e: any) {
+                           console.error("Instance list error:", e);
+                           toast({
+                             title: "Erro",
+                             description: e.message,
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                     >
+                       📋 Listar
+                     </Button>
+                   </div>
+
+                   <div className="grid grid-cols-2 gap-2">
+                     <Button
+                       variant="secondary"
+                       size="sm"
+                       onClick={async () => {
+                         try {
+                           const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
+                             body: { action: 'diag_discovery' }
+                           });
+                           console.log("[diag_discovery]", data);
+                           toast({ 
+                             title: "Discovery", 
+                             description: JSON.stringify(data?.data || data) 
+                           });
+                         } catch (e: any) {
+                           toast({
+                             title: "Discovery Error",
+                             description: e.message,
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                     >
+                       🔍 Discovery
+                     </Button>
+
+                     <Button
+                       variant="secondary" 
+                       size="sm"
+                       onClick={async () => {
+                         try {
+                           const { data, error } = await supabase.functions.invoke('evolution-connector-v2', {
+                             body: { action: 'diag_reset_discovery' }
+                           });
+                           console.log("[diag_reset_discovery]", data);
+                           toast({ title: "Discovery resetado", description: "Cache limpo e paths redescobrertos" });
+                         } catch (e: any) {
+                           toast({
+                             title: "Reset Error",
+                             description: e.message,
+                             variant: "destructive"
+                           });
+                         }
+                       }}
+                     >
+                       🔄 Reset
+                     </Button>
+                   </div>
                 </div>
 
                 <Button
