@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.4.0/mod.ts";
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances, getDiscovered, resetDiscovery } from "../_shared/evolution.ts";
+import { ensureInstance, connectInstance, getQr, getStatus, normalizeQr, delay, listInstances, getDiscovered, resetDiscovery, createInstance } from "../_shared/evolution.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
