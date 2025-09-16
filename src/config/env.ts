@@ -5,11 +5,11 @@ export const ENV = {
   FUNCTIONS_BASE_URL:
     (import.meta.env.VITE_FUNCTIONS_BASE_URL as string) ||
     (() => {
-      // Deriva https://<ref>.functions.supabase.co/functions/v1 (correto)
+      // Derive correct Functions URL: https://<ref>.functions.supabase.co/functions/v1
       const url = (import.meta.env.VITE_SUPABASE_URL as string) || "";
       try {
         const u = new URL(url);
-        const ref = u.hostname.split('.')[0]; // extrai ref do projeto
+        const ref = u.hostname.split('.')[0]; // extract project ref
         return `https://${ref}.functions.supabase.co/functions/v1`;
       } catch {
         return "https://twqcybbjyhcokcrdfgkk.functions.supabase.co/functions/v1";
