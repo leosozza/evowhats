@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -14,7 +13,7 @@ type UseLineEvolutionApi = {
   startPolling: (lineId: string, intervalMs?: number) => void;
   stopPolling: (lineId: string) => void;
   stopAll: () => void;
-  testSend: (lineId: string, to: string) => Promise<any>;
+  testSend: (lineId: string, to: string) => Promise<unknown>;
 } & UseLineEvolutionState;
 
 function normalizeState(s?: string): string {
@@ -38,41 +37,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
   const [statusByLine, setStatusByLine] = useState<Record<string, string>>({});
   const [qrByLine, setQrByLine] = useState<Record<string, string | null>>({});
   const timersRef = useRef<Map<string, number>>(new Map());
-
-  const startSession = useCallback(async (lineId: string) => {
-    setLoadingLine(lineId);
-    try {
-      console.log(`[useLineEvolution] Starting session for line ${lineId}`);
-      
-      // 1. Ensure line session exists
-      const { data: ensureResult, error: ensureError } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { 
-          action: "ensure_line_session", 
-          lineId: lineId
-        },
-      });
-
-      if (ensureError) throw ensureError;
-      if (!ensureResult?.ok) throw new Error(ensureResult?.error || "Failed to ensure session");
-
-      // 2. Start session
-      const { data: startResult, error: startError } = await supabase.functions.invoke("evolution-connector-v2", {
-        body: { 
-          action: "start_session_for_line", 
-          lineId: lineId
-        },
-      });
-
-      if (startError) throw startError;
-      if (!startResult?.ok) throw new Error(startResult?.error || "Failed to start session");
-
-      // 3. Initial status check
-      await refreshStatus(lineId);
-      
-    } finally {
-      setLoadingLine(null);
-    }
-  }, []);
+  const statusByLineRef = useRef<Record<string, string>>({});
 
   const refreshStatus = useCallback(async (lineId: string) => {
     try {
@@ -90,6 +55,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
       if (!statusResult?.ok) throw new Error(statusResult?.error || "Failed to get status");
 
       const state = normalizeState(statusResult?.state || statusResult?.data?.state || "unknown");
+      statusByLineRef.current[lineId] = state;
       setStatusByLine(prev => ({ ...prev, [lineId]: state }));
 
       if (isConnected(state)) {
@@ -120,21 +86,66 @@ export function useLineEvolution(): UseLineEvolutionApi {
 
     } catch (error) {
       console.error("[useLineEvolution] Status refresh failed:", error);
+      statusByLineRef.current[lineId] = "error";
       setStatusByLine(prev => ({ ...prev, [lineId]: "error" }));
     }
   }, []);
 
+  const startSession = useCallback(async (lineId: string) => {
+    setLoadingLine(lineId);
+    try {
+      console.log(`[useLineEvolution] Starting session for line ${lineId}`);
+
+      // 1. Ensure line session exists
+      const { data: ensureResult, error: ensureError } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: {
+          action: "ensure_line_session",
+          lineId: lineId
+        },
+      });
+
+      if (ensureError) throw ensureError;
+      if (!ensureResult?.ok) throw new Error(ensureResult?.error || "Failed to ensure session");
+
+      // 2. Start session
+      const { data: startResult, error: startError } = await supabase.functions.invoke("evolution-connector-v2", {
+        body: {
+          action: "start_session_for_line",
+          lineId: lineId
+        },
+      });
+
+      if (startError) throw startError;
+      if (!startResult?.ok) throw new Error(startResult?.error || "Failed to start session");
+
+      // 3. Initial status check
+      await refreshStatus(lineId);
+
+    } finally {
+      setLoadingLine(null);
+    }
+  }, [refreshStatus]);
+
   const testSend = useCallback(async (lineId: string, to: string) => {
     console.log(`[useLineEvolution] Testing send to ${to} via line ${lineId}`);
-    
+
     const { data, error } = await supabase.functions.invoke("evolution-connector-v2", {
       body: { action: "test_send", lineId, to, text: "Ping de teste do EvoWhats" },
     });
-    
+
     if (error) throw error;
     if (!data?.ok) throw new Error(data?.error || "Test send failed");
-    
+
     return data;
+  }, []);
+
+  const stopPolling = useCallback((lineId: string) => {
+    const id = timersRef.current.get(lineId);
+    if (id) {
+      console.log(`[useLineEvolution] Stopping polling for line ${lineId}`);
+      clearInterval(id);
+      timersRef.current.delete(lineId);
+    }
   }, []);
 
   const startPolling = useCallback((lineId: string, intervalMs: number = 4000) => {
@@ -146,8 +157,7 @@ export function useLineEvolution(): UseLineEvolutionApi {
     const poll = async () => {
       try {
         await refreshStatus(lineId);
-        // If connected, stop polling
-        const currentStatus = statusByLine[lineId] || "";
+        const currentStatus = statusByLineRef.current[lineId] || "";
         if (isConnected(currentStatus)) {
           console.log(`[useLineEvolution] Line ${lineId} connected, stopping polling`);
           stopPolling(lineId);
@@ -157,22 +167,15 @@ export function useLineEvolution(): UseLineEvolutionApi {
       }
     };
 
-    // Initial poll
-    poll();
-    
-    // Set interval
-    const id = window.setInterval(poll, intervalMs);
-    timersRef.current.set(lineId, id);
-  }, [refreshStatus, statusByLine]);
-
-  const stopPolling = useCallback((lineId: string) => {
-    const id = timersRef.current.get(lineId);
-    if (id) {
-      console.log(`[useLineEvolution] Stopping polling for line ${lineId}`);
-      clearInterval(id);
-      timersRef.current.delete(lineId);
-    }
-  }, []);
+    (async () => {
+      await poll();
+      if (isConnected(statusByLineRef.current[lineId] || "")) {
+        return;
+      }
+      const id = window.setInterval(poll, intervalMs);
+      timersRef.current.set(lineId, id);
+    })();
+  }, [refreshStatus, stopPolling]);
 
   const stopAll = useCallback(() => {
     console.log("[useLineEvolution] Stopping all polling");
